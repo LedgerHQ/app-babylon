@@ -2096,6 +2096,8 @@ BBN_FingerPrintType get_fingerprint(const uint8_t fingerprint[static 4]) {
     // FP_BIP322_MESSAGE        fingerprint for BIP322 message
     // FP_BIP322_TAPPUB         fingerprint for BIP322 taproot pubkey
     // FP_OTHER                 not special fingerprint
+    // Coinspect:
+    // FP_BIP322_HASH           fingerprint for BIP322 message first 64 bytes hash
     if (!memcmp(fingerprint, BBN_NULL_FP, 4)) {
         return FP_NULL;
     } else if (!memcmp(fingerprint, BBN_LEAFHASH_DISPLAY_FP, 4)) {
@@ -2108,6 +2110,8 @@ BBN_FingerPrintType get_fingerprint(const uint8_t fingerprint[static 4]) {
         return FP_BIP322_MESSAGE;
     } else if (!memcmp(fingerprint, BBN_BIP322_TAPPUB, 4)) {
         return FP_BIP322_TAPPUB;
+    } else if (!memcmp(fingerprint, BBN_BIP322_HASH, 4)) {
+        return FP_BIP322_HASH;
     } else {
         return FP_OTHER;
     }
