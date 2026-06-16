@@ -16,16 +16,15 @@
  *****************************************************************************/
 
 #ifdef HAVE_NBGL
-#include "nbgl_use_case.h"
-
 #include "../globals.h"
 #include "menu.h"
+#include "nbgl_use_case.h"
 
 #define SETTING_INFO_NB 3
-static const char* const INFO_TYPES[SETTING_INFO_NB] = {"Version", "Developer", "Copyright"};
-static const char* const INFO_CONTENTS[SETTING_INFO_NB] = {APPVERSION,
-                                                           "Tomo Wallet Team",
-                                                           "(c) 2025 Ledger"};
+static const char* const INFO_TYPES[SETTING_INFO_NB] = {"Version", "Developer",
+                                                        "Copyright"};
+static const char* const INFO_CONTENTS[SETTING_INFO_NB] = {
+    APPVERSION, "Tomo Wallet Team", "(c) 2025 Ledger"};
 
 static const nbgl_contentInfoList_t infoList = {
     .nbInfos = SETTING_INFO_NB,
@@ -33,30 +32,18 @@ static const nbgl_contentInfoList_t infoList = {
     .infoContents = INFO_CONTENTS,
 };
 
-static void exit(void) {
-    os_sched_exit(-1);
-}
+static void exit(void) { os_sched_exit(-1); }
 
 void ui_menu_main_flow_bitcoin(void) {
-    nbgl_useCaseHomeAndSettings(APPNAME,
-                                &C_Babylon_64px,
+    nbgl_useCaseHomeAndSettings(APPNAME, &C_Babylon_64px,
                                 "This app enables staking Bitcoin with Babylon",
-                                INIT_HOME_PAGE,
-                                NULL,
-                                &infoList,
-                                NULL,
-                                exit);
+                                INIT_HOME_PAGE, NULL, &infoList, NULL, exit);
 }
 
 void ui_menu_main_flow_bitcoin_testnet(void) {
-    nbgl_useCaseHomeAndSettings("Babylon BTC Test",
-                                &C_Babylon_64px,
+    nbgl_useCaseHomeAndSettings("Babylon BTC Test", &C_Babylon_64px,
                                 "This app enables staking Bitcoin with Babylon",
-                                INIT_HOME_PAGE,
-                                NULL,
-                                &infoList,
-                                NULL,
-                                exit);
+                                INIT_HOME_PAGE, NULL, &infoList, NULL, exit);
 }
 
 #endif  // HAVE_NBGL

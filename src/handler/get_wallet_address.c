@@ -17,8 +17,7 @@
 
 #include <stdint.h>
 
-#include "boilerplate/io.h"
-#include "boilerplate/sw.h"
+#include "../commands.h"
 #include "../common/base58.h"
 #include "../common/bip32.h"
 #include "../common/buffer.h"
@@ -27,25 +26,24 @@
 #include "../common/script.h"
 #include "../common/segwit_addr.h"
 #include "../common/wallet.h"
-#include "../commands.h"
 #include "../constants.h"
 #include "../crypto.h"
 #include "../error_codes.h"
+#include "../swap/handle_swap_sign_transaction.h"
+#include "../swap/swap_globals.h"
 #include "../ui/display.h"
 #include "../ui/menu.h"
-
-#include "../swap/swap_globals.h"
-#include "../swap/handle_swap_sign_transaction.h"
-
-#include "lib/policy.h"
-#include "lib/get_preimage.h"
-#include "lib/get_merkle_leaf_element.h"
-
-#include "handlers.h"
+#include "boilerplate/io.h"
+#include "boilerplate/sw.h"
 #include "client_commands.h"
+#include "handlers.h"
+#include "lib/get_merkle_leaf_element.h"
+#include "lib/get_preimage.h"
+#include "lib/policy.h"
 
-void handler_get_wallet_address(dispatcher_context_t *dc, uint8_t protocol_version) {
-    (void) protocol_version;
+void handler_get_wallet_address(dispatcher_context_t* dc,
+                                uint8_t protocol_version) {
+    (void)protocol_version;
 
     LOG_PROCESSOR(__FILE__, __LINE__, __func__);
 
@@ -57,7 +55,8 @@ void handler_get_wallet_address(dispatcher_context_t *dc, uint8_t protocol_versi
     uint8_t wallet_id[32];
     uint8_t wallet_hmac[32];
 
-    bool is_wallet_default;  // whether the wallet policy can be used without being registered
+    bool is_wallet_default;  // whether the wallet policy can be used without
+                             // being registered
 
     policy_map_wallet_header_t wallet_header;
 
@@ -97,33 +96,29 @@ void handler_get_wallet_address(dispatcher_context_t *dc, uint8_t protocol_versi
         uint8_t serialized_wallet_policy[MAX_WALLET_POLICY_SERIALIZED_LENGTH];
 
         // Fetch the serialized wallet policy from the client
-        int serialized_wallet_policy_len = call_get_preimage(dc,
-                                                             wallet_id,
-                                                             serialized_wallet_policy,
-                                                             sizeof(serialized_wallet_policy));
+        int serialized_wallet_policy_len =
+            call_get_preimage(dc, wallet_id, serialized_wallet_policy,
+                              sizeof(serialized_wallet_policy));
         if (serialized_wallet_policy_len < 0) {
             SEND_SW(dc, SW_INCORRECT_DATA);
             return;
         }
 
-        buffer_t serialized_wallet_policy_buf =
-            buffer_create(serialized_wallet_policy, serialized_wallet_policy_len);
+        buffer_t serialized_wallet_policy_buf = buffer_create(
+            serialized_wallet_policy, serialized_wallet_policy_len);
 
         uint8_t policy_map_descriptor[MAX_DESCRIPTOR_TEMPLATE_LENGTH];
-        if (0 > read_and_parse_wallet_policy(dc,
-                                             NULL,
-                                             &serialized_wallet_policy_buf,
-                                             &wallet_header,
-                                             policy_map_descriptor,
-                                             wallet_policy_map.bytes,
-                                             sizeof(wallet_policy_map.bytes),
-                                             false)) {
+        if (0 > read_and_parse_wallet_policy(
+                    dc, NULL, &serialized_wallet_policy_buf, &wallet_header,
+                    policy_map_descriptor, wallet_policy_map.bytes,
+                    sizeof(wallet_policy_map.bytes), false)) {
             SEND_SW(dc, SW_INCORRECT_DATA);
             return;
         }
     }
 
-    // the binary OR of all the hmac bytes (so == 0 iff the hmac is identically 0)
+    // the binary OR of all the hmac bytes (so == 0 iff the hmac is identically
+    // 0)
     uint8_t hmac_or = 0;
     for (int i = 0; i < 32; i++) {
         hmac_or = hmac_or | wallet_hmac[i];
@@ -132,7 +127,8 @@ void handler_get_wallet_address(dispatcher_context_t *dc, uint8_t protocol_versi
     if (hmac_or == 0) {
         // No hmac, verify that the policy is indeed a default one
 
-        if (!is_wallet_policy_standard(dc, &wallet_header, &wallet_policy_map.parsed)) {
+        if (!is_wallet_policy_standard(dc, &wallet_header,
+                                       &wallet_policy_map.parsed)) {
             SEND_SW(dc, SW_INCORRECT_DATA);
             return;
         }
@@ -165,7 +161,8 @@ void handler_get_wallet_address(dispatcher_context_t *dc, uint8_t protocol_versi
     // Swap feature: check that the wallet policy is a default one
     if (G_swap_state.called_from_swap && !is_wallet_default) {
         PRINTF("Must be a default wallet policy for swap feature\n");
-        SEND_SW_EC(dc, SW_FAIL_SWAP, EC_SWAP_ERROR_WRONG_METHOD_NONDEFAULT_POLICY);
+        SEND_SW_EC(dc, SW_FAIL_SWAP,
+                   EC_SWAP_ERROR_WRONG_METHOD_NONDEFAULT_POLICY);
         finalize_exchange_sign_transaction(false);
     }
 
@@ -185,13 +182,13 @@ void handler_get_wallet_address(dispatcher_context_t *dc, uint8_t protocol_versi
         uint8_t script[MAX_PREVOUT_SCRIPTPUBKEY_LEN];
 
         int script_len = get_wallet_script(
-            dc,
-            &wallet_policy_map.parsed,
-            &(wallet_derivation_info_t){.wallet_version = wallet_header.version,
-                                        .keys_merkle_root = wallet_header.keys_info_merkle_root,
-                                        .n_keys = wallet_header.n_keys,
-                                        .change = is_change,
-                                        .address_index = address_index},
+            dc, &wallet_policy_map.parsed,
+            &(wallet_derivation_info_t){
+                .wallet_version = wallet_header.version,
+                .keys_merkle_root = wallet_header.keys_info_merkle_root,
+                .n_keys = wallet_header.n_keys,
+                .change = is_change,
+                .address_index = address_index},
             script);
         if (script_len < 0) {
             PRINTF("Couldn't produce wallet script\n");
@@ -202,7 +199,8 @@ void handler_get_wallet_address(dispatcher_context_t *dc, uint8_t protocol_versi
         int address_len;
         char address[MAX_ADDRESS_LENGTH_STR + 1];  // null-terminated string
 
-        address_len = get_script_address(script, script_len, address, sizeof(address));
+        address_len =
+            get_script_address(script, script_len, address, sizeof(address));
 
         if (address_len < 0) {
             PRINTF("Could not produce address\n");
@@ -211,9 +209,9 @@ void handler_get_wallet_address(dispatcher_context_t *dc, uint8_t protocol_versi
         }
 
         if (display_address != 0) {
-            if (!ui_display_wallet_address(dc,
-                                           is_wallet_default ? NULL : wallet_header.name,
-                                           address)) {
+            if (!ui_display_wallet_address(
+                    dc, is_wallet_default ? NULL : wallet_header.name,
+                    address)) {
                 SEND_SW(dc, SW_DENY);
                 return;
             }
@@ -222,13 +220,15 @@ void handler_get_wallet_address(dispatcher_context_t *dc, uint8_t protocol_versi
         SEND_RESPONSE(dc, address, address_len, SW_OK);
 
 #ifdef HAVE_NBGL
-        // Workaround for a glitch when get_wallet_address is called right after a UX flow that has
-        // a long confirmation screen (e.g. register_wallet), as processing this command sometimes
-        // lead to the "Processing..." screen not being cleared at the end of the command.
-        // By forcing to show the dashboard, we avoid it; however, this is not a perfect solution,
-        // as it results in cutting short the duration of the "Address verified" status.
-        // This only happens on Flex and Stax, and only for complex policies. Therefore,
-        // we use the workaround for non-default wallets, and only on NBGL devices.
+        // Workaround for a glitch when get_wallet_address is called right after
+        // a UX flow that has a long confirmation screen (e.g. register_wallet),
+        // as processing this command sometimes lead to the "Processing..."
+        // screen not being cleared at the end of the command. By forcing to
+        // show the dashboard, we avoid it; however, this is not a perfect
+        // solution, as it results in cutting short the duration of the "Address
+        // verified" status. This only happens on Flex and Stax, and only for
+        // complex policies. Therefore, we use the workaround for non-default
+        // wallets, and only on NBGL devices.
         if (!is_wallet_default) {
             ui_menu_main();
         }

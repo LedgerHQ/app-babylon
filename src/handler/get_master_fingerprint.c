@@ -17,24 +17,27 @@
 
 #include <stdint.h>
 
-#include "boilerplate/dispatcher.h"
-#include "boilerplate/sw.h"
 #include "../commands.h"
 #include "../crypto.h"
-
+#include "boilerplate/dispatcher.h"
+#include "boilerplate/sw.h"
 #include "handlers.h"
 
-void handler_get_master_fingerprint(dispatcher_context_t *dc, uint8_t protocol_version) {
-    (void) protocol_version;
+void handler_get_master_fingerprint(dispatcher_context_t* dc,
+                                    uint8_t protocol_version) {
+    (void)protocol_version;
 
     uint8_t master_pubkey[33];
-    if (!crypto_get_compressed_pubkey_at_path((uint32_t[]){}, 0, master_pubkey, NULL)) {
+    if (!crypto_get_compressed_pubkey_at_path((uint32_t[]){}, 0, master_pubkey,
+                                              NULL)) {
         SEND_SW(dc, SW_BAD_STATE);  // should never happen
         return;
     }
 
     uint8_t master_fingerprint_be[4];
-    write_u32_be(master_fingerprint_be, 0, crypto_get_key_fingerprint(master_pubkey));
+    write_u32_be(master_fingerprint_be, 0,
+                 crypto_get_key_fingerprint(master_pubkey));
 
-    SEND_RESPONSE(dc, master_fingerprint_be, sizeof(master_fingerprint_be), SW_OK);
+    SEND_RESPONSE(dc, master_fingerprint_be, sizeof(master_fingerprint_be),
+                  SW_OK);
 }

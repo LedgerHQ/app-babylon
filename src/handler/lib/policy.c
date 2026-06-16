@@ -1,19 +1,17 @@
-#include <stdlib.h>
-
 #include "policy.h"
 
-#include "../lib/get_merkle_leaf_element.h"
-#include "../lib/get_preimage.h"
-#include "../../crypto.h"
+#include <stdlib.h>
+
 #include "../../common/base58.h"
 #include "../../common/bitvector.h"
 #include "../../common/read.h"
 #include "../../common/script.h"
 #include "../../common/segwit_addr.h"
 #include "../../common/wallet.h"
-
+#include "../../crypto.h"
+#include "../lib/get_merkle_leaf_element.h"
+#include "../lib/get_preimage.h"
 #include "debug-helpers/debug.h"
-
 #include "ledger_assert.h"
 
 #define MAX_POLICY_DEPTH 12
@@ -22,41 +20,44 @@
 #define PROCESSOR_FLAG_V 1
 
 /**
- * The label used to derive the symmetric key used to register/verify wallet policies on device.
+ * The label used to derive the symmetric key used to register/verify wallet
+ * policies on device.
  */
 #define WALLET_SLIP0021_LABEL "\0LEDGER-Wallet policy"
 #define WALLET_SLIP0021_LABEL_LEN \
     (sizeof(WALLET_SLIP0021_LABEL) - 1)  // sizeof counts the terminating 0
 
 typedef struct {
-    const policy_node_t *policy_node;
+    const policy_node_t* policy_node;
 
     // bytes written to output
     uint16_t length;
-    // used to identify the stage of execution for nodes that require multiple rounds
+    // used to identify the stage of execution for nodes that require multiple
+    // rounds
     uint8_t step;
 
     uint8_t flags;
 } policy_parser_node_state_t;
 
 typedef struct {
-    dispatcher_context_t *dispatcher_context;
-    const wallet_derivation_info_t *wdi;
+    dispatcher_context_t* dispatcher_context;
+    const wallet_derivation_info_t* wdi;
     bool is_taproot;
 
-    policy_parser_node_state_t nodes[MAX_POLICY_DEPTH];  // stack of nodes being processed
-    int node_stack_eos;  // index of node being processed within nodes; will be set -1 at the end of
-                         // processing
+    policy_parser_node_state_t
+        nodes[MAX_POLICY_DEPTH];  // stack of nodes being processed
+    int node_stack_eos;  // index of node being processed within nodes; will be
+                         // set -1 at the end of processing
 
-    cx_hash_t *hash_context;
+    cx_hash_t* hash_context;
     uint8_t hash[32];  // when a node is popped, the hash is computed here
-    sign_psbt_state_t *st;
+    sign_psbt_state_t* st;
 } policy_parser_state_t;
 
 // comparator for pointers to arrays of equal length
-static int cmp_arrays(const void *a, const void *b, size_t length) {
-    const uint8_t *key_a = (const uint8_t *) a;
-    const uint8_t *key_b = (const uint8_t *) b;
+static int cmp_arrays(const void* a, const void* b, size_t length) {
+    const uint8_t* key_a = (const uint8_t*)a;
+    const uint8_t* key_b = (const uint8_t*)b;
     for (size_t i = 0; i < length; i++) {
         int diff = key_a[i] - key_b[i];
         if (diff != 0) {
@@ -66,21 +67,30 @@ static int cmp_arrays(const void *a, const void *b, size_t length) {
     return 0;
 }
 
-typedef int (*policy_parser_processor_t)(policy_parser_state_t *state, const void *arg);
+typedef int (*policy_parser_processor_t)(policy_parser_state_t* state,
+                                         const void* arg);
 
 typedef enum {
-    CMD_CODE_OP,       // data is a byte to emit (usually an opcode)
-    CMD_CODE_OP_V,     // data is an opcode, but transform according to 'v' if necessary
-    CMD_CODE_PUSH_PK,  // push the compressed pubkey indicated by the current policy_node_with_key_t
-    CMD_CODE_PUSH_PKH,         // push the hash160 of the compressed pubkey indicated by the current
-                               // policy_node_with_key_t
-    CMD_CODE_PUSH_UINT32,      // push the integer in the current policy_node_with_uint32_t
-    CMD_CODE_PUSH_HASH20,      // push a 20 bytes hash in the current policy_node_with_hash_160_t
-    CMD_CODE_PUSH_HASH32,      // push a 32 bytes hash in the current policy_node_with_hash_256_t
-    CMD_CODE_PROCESS_CHILD,    // process the i-th script of a policy_node_with_scripts_t,
-                               // where i is indicated by the command data
-    CMD_CODE_PROCESS_CHILD_V,  // like the previous, but it propagates the v flag to the child
-    CMD_CODE_PROCESS_CHILD_VV,  // like the previous, but it activates the v flag in the child
+    CMD_CODE_OP,        // data is a byte to emit (usually an opcode)
+    CMD_CODE_OP_V,      // data is an opcode, but transform according to 'v' if
+                        // necessary
+    CMD_CODE_PUSH_PK,   // push the compressed pubkey indicated by the current
+                        // policy_node_with_key_t
+    CMD_CODE_PUSH_PKH,  // push the hash160 of the compressed pubkey indicated
+                        // by the current policy_node_with_key_t
+    CMD_CODE_PUSH_UINT32,    // push the integer in the current
+                             // policy_node_with_uint32_t
+    CMD_CODE_PUSH_HASH20,    // push a 20 bytes hash in the current
+                             // policy_node_with_hash_160_t
+    CMD_CODE_PUSH_HASH32,    // push a 32 bytes hash in the current
+                             // policy_node_with_hash_256_t
+    CMD_CODE_PROCESS_CHILD,  // process the i-th script of a
+                             // policy_node_with_scripts_t, where i is indicated
+                             // by the command data
+    CMD_CODE_PROCESS_CHILD_V,   // like the previous, but it propagates the v
+                                // flag to the child
+    CMD_CODE_PROCESS_CHILD_VV,  // like the previous, but it activates the v
+                                // flag in the child
 
     CMD_CODE_END  // last step, should terminate here
 } generic_processor_command_code_e;
@@ -91,248 +101,195 @@ typedef struct {
 } generic_processor_command_t;
 
 // Whitelistes for allowed fragments when processing inner scripts expressions
-static const uint8_t fragment_whitelist_sh[] = {TOKEN_WPKH, TOKEN_MULTI, TOKEN_SORTEDMULTI};
-static const uint8_t fragment_whitelist_sh_wsh[] = {TOKEN_MULTI, TOKEN_SORTEDMULTI};
+static const uint8_t fragment_whitelist_sh[] = {TOKEN_WPKH, TOKEN_MULTI,
+                                                TOKEN_SORTEDMULTI};
+static const uint8_t fragment_whitelist_sh_wsh[] = {TOKEN_MULTI,
+                                                    TOKEN_SORTEDMULTI};
 static const uint8_t fragment_whitelist_wsh[] = {
     /* tokens for scripts on segwit */
-    TOKEN_0,
-    TOKEN_1,
-    TOKEN_PK,
-    TOKEN_PKH,
-    TOKEN_PK_K,
-    TOKEN_PK_H,
-    TOKEN_OLDER,
-    TOKEN_AFTER,
-    TOKEN_SHA256,
-    TOKEN_HASH256,
-    TOKEN_RIPEMD160,
-    TOKEN_HASH160,
-    TOKEN_ANDOR,
-    TOKEN_AND_V,
-    TOKEN_AND_B,
-    TOKEN_AND_N,
-    TOKEN_MULTI,
-    TOKEN_OR_B,
-    TOKEN_OR_C,
-    TOKEN_OR_D,
-    TOKEN_OR_I,
-    TOKEN_SORTEDMULTI,
-    TOKEN_THRESH,
+    TOKEN_0, TOKEN_1, TOKEN_PK, TOKEN_PKH, TOKEN_PK_K, TOKEN_PK_H, TOKEN_OLDER,
+    TOKEN_AFTER, TOKEN_SHA256, TOKEN_HASH256, TOKEN_RIPEMD160, TOKEN_HASH160,
+    TOKEN_ANDOR, TOKEN_AND_V, TOKEN_AND_B, TOKEN_AND_N, TOKEN_MULTI, TOKEN_OR_B,
+    TOKEN_OR_C, TOKEN_OR_D, TOKEN_OR_I, TOKEN_SORTEDMULTI, TOKEN_THRESH,
     // wrappers
-    TOKEN_A,
-    TOKEN_S,
-    TOKEN_C,
-    TOKEN_T,
-    TOKEN_D,
-    TOKEN_V,
-    TOKEN_J,
-    TOKEN_N,
-    TOKEN_L,
-    TOKEN_U};
+    TOKEN_A, TOKEN_S, TOKEN_C, TOKEN_T, TOKEN_D, TOKEN_V, TOKEN_J, TOKEN_N,
+    TOKEN_L, TOKEN_U};
 static const uint8_t fragment_whitelist_tapscript[] = {
     /* tokens for scripts in taptrees */
-    TOKEN_0,
-    TOKEN_1,
-    TOKEN_PK,
-    TOKEN_PKH,
-    TOKEN_PK_K,
-    TOKEN_PK_H,
-    TOKEN_OLDER,
-    TOKEN_AFTER,
-    TOKEN_SHA256,
-    TOKEN_HASH256,
-    TOKEN_RIPEMD160,
-    TOKEN_HASH160,
-    TOKEN_ANDOR,
-    TOKEN_AND_V,
-    TOKEN_AND_B,
-    TOKEN_AND_N,
-    TOKEN_MULTI_A,
-    TOKEN_OR_B,
-    TOKEN_OR_C,
-    TOKEN_OR_D,
-    TOKEN_OR_I,
-    TOKEN_SORTEDMULTI_A,
+    TOKEN_0, TOKEN_1, TOKEN_PK, TOKEN_PKH, TOKEN_PK_K, TOKEN_PK_H, TOKEN_OLDER,
+    TOKEN_AFTER, TOKEN_SHA256, TOKEN_HASH256, TOKEN_RIPEMD160, TOKEN_HASH160,
+    TOKEN_ANDOR, TOKEN_AND_V, TOKEN_AND_B, TOKEN_AND_N, TOKEN_MULTI_A,
+    TOKEN_OR_B, TOKEN_OR_C, TOKEN_OR_D, TOKEN_OR_I, TOKEN_SORTEDMULTI_A,
     TOKEN_THRESH,
     // wrappers
-    TOKEN_A,
-    TOKEN_S,
-    TOKEN_C,
-    TOKEN_T,
-    TOKEN_D,
-    TOKEN_V,
-    TOKEN_J,
-    TOKEN_N,
-    TOKEN_L,
-    TOKEN_U};
+    TOKEN_A, TOKEN_S, TOKEN_C, TOKEN_T, TOKEN_D, TOKEN_V, TOKEN_J, TOKEN_N,
+    TOKEN_L, TOKEN_U};
 
-static const generic_processor_command_t commands_0[] = {{CMD_CODE_OP_V, OP_0}, {CMD_CODE_END, 0}};
-static const generic_processor_command_t commands_1[] = {{CMD_CODE_OP_V, OP_1}, {CMD_CODE_END, 0}};
-static const generic_processor_command_t commands_pk_k[] = {{CMD_CODE_PUSH_PK, 0},
-                                                            {CMD_CODE_OP_V, OP_CHECKSIGVERIFY},
-                                                            {CMD_CODE_END, 0}};
-static const generic_processor_command_t commands_pk_h[] = {{CMD_CODE_OP, OP_DUP},
-                                                            {CMD_CODE_OP, OP_HASH160},
-                                                            {CMD_CODE_PUSH_PKH, 0},
-                                                            {CMD_CODE_OP, OP_EQUALVERIFY},
-                                                            {CMD_CODE_END, 0}};
-static const generic_processor_command_t commands_pk[] = {{CMD_CODE_PUSH_PK, 0},
-                                                          {CMD_CODE_OP_V, OP_CHECKSIG},
-                                                          {CMD_CODE_END, 0}};
-static const generic_processor_command_t commands_older[] = {{CMD_CODE_PUSH_UINT32, 0},
-                                                             {CMD_CODE_OP_V, OP_CSV},
-                                                             {CMD_CODE_END, 0}};
-static const generic_processor_command_t commands_after[] = {{CMD_CODE_PUSH_UINT32, 0},
-                                                             {CMD_CODE_OP_V, OP_CLTV},
-                                                             {CMD_CODE_END, 0}};
+static const generic_processor_command_t commands_0[] = {{CMD_CODE_OP_V, OP_0},
+                                                         {CMD_CODE_END, 0}};
+static const generic_processor_command_t commands_1[] = {{CMD_CODE_OP_V, OP_1},
+                                                         {CMD_CODE_END, 0}};
+static const generic_processor_command_t commands_pk_k[] = {
+    {CMD_CODE_PUSH_PK, 0},
+    {CMD_CODE_OP_V, OP_CHECKSIGVERIFY},
+    {CMD_CODE_END, 0}};
+static const generic_processor_command_t commands_pk_h[] = {
+    {CMD_CODE_OP, OP_DUP},
+    {CMD_CODE_OP, OP_HASH160},
+    {CMD_CODE_PUSH_PKH, 0},
+    {CMD_CODE_OP, OP_EQUALVERIFY},
+    {CMD_CODE_END, 0}};
+static const generic_processor_command_t commands_pk[] = {
+    {CMD_CODE_PUSH_PK, 0}, {CMD_CODE_OP_V, OP_CHECKSIG}, {CMD_CODE_END, 0}};
+static const generic_processor_command_t commands_older[] = {
+    {CMD_CODE_PUSH_UINT32, 0}, {CMD_CODE_OP_V, OP_CSV}, {CMD_CODE_END, 0}};
+static const generic_processor_command_t commands_after[] = {
+    {CMD_CODE_PUSH_UINT32, 0}, {CMD_CODE_OP_V, OP_CLTV}, {CMD_CODE_END, 0}};
 
-static const generic_processor_command_t commands_sha256[] = {{CMD_CODE_OP, OP_SIZE},
-                                                              {CMD_CODE_OP, 1},   // 1-byte push
-                                                              {CMD_CODE_OP, 32},  // pushed value
-                                                              {CMD_CODE_OP, OP_EQUALVERIFY},
-                                                              {CMD_CODE_OP, OP_SHA256},
-                                                              {CMD_CODE_PUSH_HASH32, 0},
-                                                              {CMD_CODE_OP_V, OP_EQUAL},
-                                                              {CMD_CODE_END, 0}};
+static const generic_processor_command_t commands_sha256[] = {
+    {CMD_CODE_OP, OP_SIZE},
+    {CMD_CODE_OP, 1},   // 1-byte push
+    {CMD_CODE_OP, 32},  // pushed value
+    {CMD_CODE_OP, OP_EQUALVERIFY},
+    {CMD_CODE_OP, OP_SHA256},
+    {CMD_CODE_PUSH_HASH32, 0},
+    {CMD_CODE_OP_V, OP_EQUAL},
+    {CMD_CODE_END, 0}};
 
-static const generic_processor_command_t commands_hash256[] = {{CMD_CODE_OP, OP_SIZE},
-                                                               {CMD_CODE_OP, 1},   // 1-byte push
-                                                               {CMD_CODE_OP, 32},  // pushed value
-                                                               {CMD_CODE_OP, OP_EQUALVERIFY},
-                                                               {CMD_CODE_OP, OP_HASH256},
-                                                               {CMD_CODE_PUSH_HASH32, 0},
-                                                               {CMD_CODE_OP_V, OP_EQUAL},
-                                                               {CMD_CODE_END, 0}};
+static const generic_processor_command_t commands_hash256[] = {
+    {CMD_CODE_OP, OP_SIZE},
+    {CMD_CODE_OP, 1},   // 1-byte push
+    {CMD_CODE_OP, 32},  // pushed value
+    {CMD_CODE_OP, OP_EQUALVERIFY},
+    {CMD_CODE_OP, OP_HASH256},
+    {CMD_CODE_PUSH_HASH32, 0},
+    {CMD_CODE_OP_V, OP_EQUAL},
+    {CMD_CODE_END, 0}};
 
-static const generic_processor_command_t commands_ripemd160[] = {{CMD_CODE_OP, OP_SIZE},
-                                                                 {CMD_CODE_OP, 1},   // 1-byte push
-                                                                 {CMD_CODE_OP, 32},  // pushed value
-                                                                 {CMD_CODE_OP, OP_EQUALVERIFY},
-                                                                 {CMD_CODE_OP, OP_RIPEMD160},
-                                                                 {CMD_CODE_PUSH_HASH20, 0},
-                                                                 {CMD_CODE_OP_V, OP_EQUAL},
-                                                                 {CMD_CODE_END, 0}};
+static const generic_processor_command_t commands_ripemd160[] = {
+    {CMD_CODE_OP, OP_SIZE},
+    {CMD_CODE_OP, 1},   // 1-byte push
+    {CMD_CODE_OP, 32},  // pushed value
+    {CMD_CODE_OP, OP_EQUALVERIFY},
+    {CMD_CODE_OP, OP_RIPEMD160},
+    {CMD_CODE_PUSH_HASH20, 0},
+    {CMD_CODE_OP_V, OP_EQUAL},
+    {CMD_CODE_END, 0}};
 
-static const generic_processor_command_t commands_hash160[] = {{CMD_CODE_OP, OP_SIZE},
-                                                               {CMD_CODE_OP, 1},   // 1-byte push
-                                                               {CMD_CODE_OP, 32},  // pushed value
-                                                               {CMD_CODE_OP, OP_EQUALVERIFY},
-                                                               {CMD_CODE_OP, OP_HASH160},
-                                                               {CMD_CODE_PUSH_HASH20, 0},
-                                                               {CMD_CODE_OP_V, OP_EQUAL},
-                                                               {CMD_CODE_END, 0}};
+static const generic_processor_command_t commands_hash160[] = {
+    {CMD_CODE_OP, OP_SIZE},
+    {CMD_CODE_OP, 1},   // 1-byte push
+    {CMD_CODE_OP, 32},  // pushed value
+    {CMD_CODE_OP, OP_EQUALVERIFY},
+    {CMD_CODE_OP, OP_HASH160},
+    {CMD_CODE_PUSH_HASH20, 0},
+    {CMD_CODE_OP_V, OP_EQUAL},
+    {CMD_CODE_END, 0}};
 
 // andor(X,Y,X) ==> [X] NOTIF [Z] ELSE [Y] ENDIF
-static const generic_processor_command_t commands_andor[] = {{CMD_CODE_PROCESS_CHILD, 0},
-                                                             {CMD_CODE_OP, OP_NOTIF},
-                                                             {CMD_CODE_PROCESS_CHILD, 2},
-                                                             {CMD_CODE_OP, OP_ELSE},
-                                                             {CMD_CODE_PROCESS_CHILD, 1},
-                                                             {CMD_CODE_OP_V, OP_ENDIF},
-                                                             {CMD_CODE_END, 0}};
+static const generic_processor_command_t commands_andor[] = {
+    {CMD_CODE_PROCESS_CHILD, 0},
+    {CMD_CODE_OP, OP_NOTIF},
+    {CMD_CODE_PROCESS_CHILD, 2},
+    {CMD_CODE_OP, OP_ELSE},
+    {CMD_CODE_PROCESS_CHILD, 1},
+    {CMD_CODE_OP_V, OP_ENDIF},
+    {CMD_CODE_END, 0}};
 
-static const generic_processor_command_t commands_and_v[] = {{CMD_CODE_PROCESS_CHILD, 0},
-                                                             {CMD_CODE_PROCESS_CHILD_V, 1},
-                                                             {CMD_CODE_END, 0}};
+static const generic_processor_command_t commands_and_v[] = {
+    {CMD_CODE_PROCESS_CHILD, 0},
+    {CMD_CODE_PROCESS_CHILD_V, 1},
+    {CMD_CODE_END, 0}};
 
-static const generic_processor_command_t commands_and_b[] = {{CMD_CODE_PROCESS_CHILD, 0},
-                                                             {CMD_CODE_PROCESS_CHILD, 1},
-                                                             {CMD_CODE_OP_V, OP_BOOLAND},
-                                                             {CMD_CODE_END, 0}};
+static const generic_processor_command_t commands_and_b[] = {
+    {CMD_CODE_PROCESS_CHILD, 0},
+    {CMD_CODE_PROCESS_CHILD, 1},
+    {CMD_CODE_OP_V, OP_BOOLAND},
+    {CMD_CODE_END, 0}};
 
-static const generic_processor_command_t commands_and_n[] = {{CMD_CODE_PROCESS_CHILD, 0},
-                                                             {CMD_CODE_OP, OP_NOTIF},
-                                                             {CMD_CODE_OP, OP_0},
-                                                             {CMD_CODE_OP, OP_ELSE},
-                                                             {CMD_CODE_PROCESS_CHILD, 1},
-                                                             {CMD_CODE_OP_V, OP_ENDIF},
-                                                             {CMD_CODE_END, 0}};
+static const generic_processor_command_t commands_and_n[] = {
+    {CMD_CODE_PROCESS_CHILD, 0},
+    {CMD_CODE_OP, OP_NOTIF},
+    {CMD_CODE_OP, OP_0},
+    {CMD_CODE_OP, OP_ELSE},
+    {CMD_CODE_PROCESS_CHILD, 1},
+    {CMD_CODE_OP_V, OP_ENDIF},
+    {CMD_CODE_END, 0}};
 
-static const generic_processor_command_t commands_or_b[] = {{CMD_CODE_PROCESS_CHILD, 0},
-                                                            {CMD_CODE_PROCESS_CHILD, 1},
-                                                            {CMD_CODE_OP_V, OP_BOOLOR},
-                                                            {CMD_CODE_END, 0}};
+static const generic_processor_command_t commands_or_b[] = {
+    {CMD_CODE_PROCESS_CHILD, 0},
+    {CMD_CODE_PROCESS_CHILD, 1},
+    {CMD_CODE_OP_V, OP_BOOLOR},
+    {CMD_CODE_END, 0}};
 
-static const generic_processor_command_t commands_or_c[] = {{CMD_CODE_PROCESS_CHILD, 0},
-                                                            {CMD_CODE_OP, OP_NOTIF},
-                                                            {CMD_CODE_PROCESS_CHILD, 1},
-                                                            {CMD_CODE_OP_V, OP_ENDIF},
-                                                            {CMD_CODE_END, 0}};
+static const generic_processor_command_t commands_or_c[] = {
+    {CMD_CODE_PROCESS_CHILD, 0},
+    {CMD_CODE_OP, OP_NOTIF},
+    {CMD_CODE_PROCESS_CHILD, 1},
+    {CMD_CODE_OP_V, OP_ENDIF},
+    {CMD_CODE_END, 0}};
 
-static const generic_processor_command_t commands_or_d[] = {{CMD_CODE_PROCESS_CHILD, 0},
-                                                            {CMD_CODE_OP, OP_IFDUP},
-                                                            {CMD_CODE_OP, OP_NOTIF},
-                                                            {CMD_CODE_PROCESS_CHILD, 1},
-                                                            {CMD_CODE_OP_V, OP_ENDIF},
-                                                            {CMD_CODE_END, 0}};
+static const generic_processor_command_t commands_or_d[] = {
+    {CMD_CODE_PROCESS_CHILD, 0}, {CMD_CODE_OP, OP_IFDUP},
+    {CMD_CODE_OP, OP_NOTIF},     {CMD_CODE_PROCESS_CHILD, 1},
+    {CMD_CODE_OP_V, OP_ENDIF},   {CMD_CODE_END, 0}};
 
-static const generic_processor_command_t commands_or_i[] = {{CMD_CODE_OP, OP_IF},
-                                                            {CMD_CODE_PROCESS_CHILD, 0},
-                                                            {CMD_CODE_OP, OP_ELSE},
-                                                            {CMD_CODE_PROCESS_CHILD, 1},
-                                                            {CMD_CODE_OP_V, OP_ENDIF},
-                                                            {CMD_CODE_END, 0}};
+static const generic_processor_command_t commands_or_i[] = {
+    {CMD_CODE_OP, OP_IF},      {CMD_CODE_PROCESS_CHILD, 0},
+    {CMD_CODE_OP, OP_ELSE},    {CMD_CODE_PROCESS_CHILD, 1},
+    {CMD_CODE_OP_V, OP_ENDIF}, {CMD_CODE_END, 0}};
 
-static const generic_processor_command_t commands_a[] = {{CMD_CODE_OP, OP_TOALTSTACK},
-                                                         {CMD_CODE_PROCESS_CHILD, 0},
-                                                         {CMD_CODE_OP, OP_FROMALTSTACK},
-                                                         {CMD_CODE_END, 0}};
+static const generic_processor_command_t commands_a[] = {
+    {CMD_CODE_OP, OP_TOALTSTACK},
+    {CMD_CODE_PROCESS_CHILD, 0},
+    {CMD_CODE_OP, OP_FROMALTSTACK},
+    {CMD_CODE_END, 0}};
 
-static const generic_processor_command_t commands_s[] = {{CMD_CODE_OP, OP_SWAP},
-                                                         {CMD_CODE_PROCESS_CHILD, 0},
-                                                         {CMD_CODE_END, 0}};
+static const generic_processor_command_t commands_s[] = {
+    {CMD_CODE_OP, OP_SWAP}, {CMD_CODE_PROCESS_CHILD, 0}, {CMD_CODE_END, 0}};
 
-static const generic_processor_command_t commands_c[] = {{CMD_CODE_PROCESS_CHILD, 0},
-                                                         {CMD_CODE_OP_V, OP_CHECKSIG},
-                                                         {CMD_CODE_END, 0}};
+static const generic_processor_command_t commands_c[] = {
+    {CMD_CODE_PROCESS_CHILD, 0},
+    {CMD_CODE_OP_V, OP_CHECKSIG},
+    {CMD_CODE_END, 0}};
 
-static const generic_processor_command_t commands_t[] = {{CMD_CODE_PROCESS_CHILD, 0},
-                                                         {CMD_CODE_OP_V, OP_1},
-                                                         {CMD_CODE_END, 0}};
+static const generic_processor_command_t commands_t[] = {
+    {CMD_CODE_PROCESS_CHILD, 0}, {CMD_CODE_OP_V, OP_1}, {CMD_CODE_END, 0}};
 
-static const generic_processor_command_t commands_d[] = {{CMD_CODE_OP, OP_DUP},
-                                                         {CMD_CODE_OP, OP_IF},
-                                                         {CMD_CODE_PROCESS_CHILD, 0},
-                                                         {CMD_CODE_OP_V, OP_ENDIF},
-                                                         {CMD_CODE_END, 0}};
+static const generic_processor_command_t commands_d[] = {
+    {CMD_CODE_OP, OP_DUP},
+    {CMD_CODE_OP, OP_IF},
+    {CMD_CODE_PROCESS_CHILD, 0},
+    {CMD_CODE_OP_V, OP_ENDIF},
+    {CMD_CODE_END, 0}};
 
-static const generic_processor_command_t commands_v[] = {{CMD_CODE_PROCESS_CHILD_VV, 0},
-                                                         {CMD_CODE_END, 0}};
+static const generic_processor_command_t commands_v[] = {
+    {CMD_CODE_PROCESS_CHILD_VV, 0}, {CMD_CODE_END, 0}};
 
-static const generic_processor_command_t commands_j[] = {{CMD_CODE_OP, OP_SIZE},
-                                                         {CMD_CODE_OP, OP_0NOTEQUAL},
-                                                         {CMD_CODE_OP, OP_IF},
-                                                         {CMD_CODE_PROCESS_CHILD, 0},
-                                                         {CMD_CODE_OP_V, OP_ENDIF},
-                                                         {CMD_CODE_END, 0}};
+static const generic_processor_command_t commands_j[] = {
+    {CMD_CODE_OP, OP_SIZE},    {CMD_CODE_OP, OP_0NOTEQUAL},
+    {CMD_CODE_OP, OP_IF},      {CMD_CODE_PROCESS_CHILD, 0},
+    {CMD_CODE_OP_V, OP_ENDIF}, {CMD_CODE_END, 0}};
 
-static const generic_processor_command_t commands_n[] = {{CMD_CODE_PROCESS_CHILD, 0},
-                                                         {CMD_CODE_OP_V, OP_0NOTEQUAL},
-                                                         {CMD_CODE_END, 0}};
+static const generic_processor_command_t commands_n[] = {
+    {CMD_CODE_PROCESS_CHILD, 0},
+    {CMD_CODE_OP_V, OP_0NOTEQUAL},
+    {CMD_CODE_END, 0}};
 
-static const generic_processor_command_t commands_l[] = {{CMD_CODE_OP, OP_IF},
-                                                         {CMD_CODE_OP, OP_0},
-                                                         {CMD_CODE_OP, OP_ELSE},
-                                                         {CMD_CODE_PROCESS_CHILD, 0},
-                                                         {CMD_CODE_OP_V, OP_ENDIF},
-                                                         {CMD_CODE_END, 0}};
+static const generic_processor_command_t commands_l[] = {
+    {CMD_CODE_OP, OP_IF},      {CMD_CODE_OP, OP_0},
+    {CMD_CODE_OP, OP_ELSE},    {CMD_CODE_PROCESS_CHILD, 0},
+    {CMD_CODE_OP_V, OP_ENDIF}, {CMD_CODE_END, 0}};
 
-static const generic_processor_command_t commands_u[] = {{CMD_CODE_OP, OP_IF},
-                                                         {CMD_CODE_PROCESS_CHILD, 0},
-                                                         {CMD_CODE_OP, OP_ELSE},
-                                                         {CMD_CODE_OP, OP_0},
-                                                         {CMD_CODE_OP_V, OP_ENDIF},
-                                                         {CMD_CODE_END, 0}};
+static const generic_processor_command_t commands_u[] = {
+    {CMD_CODE_OP, OP_IF}, {CMD_CODE_PROCESS_CHILD, 0}, {CMD_CODE_OP, OP_ELSE},
+    {CMD_CODE_OP, OP_0},  {CMD_CODE_OP_V, OP_ENDIF},   {CMD_CODE_END, 0}};
 
 int read_and_parse_wallet_policy(
-    dispatcher_context_t *dispatcher_context,
-    sign_psbt_state_t *st,
-    buffer_t *buf,
-    policy_map_wallet_header_t *wallet_header,
+    dispatcher_context_t* dispatcher_context, sign_psbt_state_t* st,
+    buffer_t* buf, policy_map_wallet_header_t* wallet_header,
     uint8_t policy_map_descriptor_template[MAX_DESCRIPTOR_TEMPLATE_LENGTH],
-    uint8_t *policy_map_bytes,
-    size_t policy_map_bytes_len,
-    bool is_sign) {
+    uint8_t* policy_map_bytes, size_t policy_map_bytes_len, bool is_sign) {
     if ((read_wallet_policy_header(buf, wallet_header)) < 0) {
         return WITH_ERROR(-1, "Failed reading wallet policy header");
     }
@@ -346,22 +303,21 @@ int read_and_parse_wallet_policy(
                wallet_header->descriptor_template_len);
     } else {
         // if V2, stream and parse descriptor template from client first
-        int descriptor_template_len = call_get_preimage(dispatcher_context,
-                                                        wallet_header->descriptor_template_sha256,
-                                                        policy_map_descriptor_template,
-                                                        MAX_DESCRIPTOR_TEMPLATE_LENGTH);
+        int descriptor_template_len = call_get_preimage(
+            dispatcher_context, wallet_header->descriptor_template_sha256,
+            policy_map_descriptor_template, MAX_DESCRIPTOR_TEMPLATE_LENGTH);
         if (descriptor_template_len < 0) {
-            return WITH_ERROR(-1, "Failed getting wallet policy descriptor template");
+            return WITH_ERROR(
+                -1, "Failed getting wallet policy descriptor template");
         }
     }
 
-    buffer_t policy_map_buffer =
-        buffer_create(policy_map_descriptor_template, wallet_header->descriptor_template_len);
+    buffer_t policy_map_buffer = buffer_create(
+        policy_map_descriptor_template, wallet_header->descriptor_template_len);
 
-    int desc_temp_len = parse_descriptor_template(&policy_map_buffer,
-                                                  policy_map_bytes,
-                                                  policy_map_bytes_len,
-                                                  wallet_header->version);
+    int desc_temp_len =
+        parse_descriptor_template(&policy_map_buffer, policy_map_bytes,
+                                  policy_map_bytes_len, wallet_header->version);
     if (desc_temp_len < 0) {
         return WITH_ERROR(-1, "Failed parsing descriptor template");
     }
@@ -375,7 +331,7 @@ int read_and_parse_wallet_policy(
         if (0 > st->bbn_action_type) {
             return WITH_ERROR(-1, "Failed  to get_action_type");
         } else {
-            if (!check_descriptor((const char *) policy_map_descriptor_template,
+            if (!check_descriptor((const char*)policy_map_descriptor_template,
                                   st->bbn_action_type)) {
                 PRINTF("--descriptor-- %d %s\n",
                        wallet_header->descriptor_template_len,
@@ -390,18 +346,19 @@ int read_and_parse_wallet_policy(
 }
 
 /**
- * Pushes a node onto the stack. Returns 0 on success, -1 if the stack is exhausted.
+ * Pushes a node onto the stack. Returns 0 on success, -1 if the stack is
+ * exhausted.
  */
-__attribute__((warn_unused_result)) static int state_stack_push(policy_parser_state_t *state,
-                                                                const policy_node_t *policy_node,
-                                                                uint8_t flags) {
+__attribute__((warn_unused_result)) static int state_stack_push(
+    policy_parser_state_t* state, const policy_node_t* policy_node,
+    uint8_t flags) {
     ++state->node_stack_eos;
 
     if (state->node_stack_eos >= MAX_POLICY_DEPTH) {
         return WITH_ERROR(-1, "Reached maximum policy depth");
     }
 
-    policy_parser_node_state_t *node = &state->nodes[state->node_stack_eos];
+    policy_parser_node_state_t* node = &state->nodes[state->node_stack_eos];
     node->policy_node = policy_node;
     node->length = 0;
     node->step = 0;
@@ -414,8 +371,9 @@ __attribute__((warn_unused_result)) static int state_stack_push(policy_parser_st
  * Pops a node from the stack.
  * Returns the emitted length on success, -1 on error.
  */
-__attribute__((warn_unused_result)) static int state_stack_pop(policy_parser_state_t *state) {
-    policy_parser_node_state_t *node = &state->nodes[state->node_stack_eos];
+__attribute__((warn_unused_result)) static int state_stack_pop(
+    policy_parser_state_t* state) {
+    policy_parser_node_state_t* node = &state->nodes[state->node_stack_eos];
 
     if (state->node_stack_eos <= -1) {
         return WITH_ERROR(-1, "Stack underflow");
@@ -429,8 +387,9 @@ __attribute__((warn_unused_result)) static int state_stack_pop(policy_parser_sta
     return node->length;
 }
 
-__attribute__((warn_unused_result)) static inline int
-execute_processor(policy_parser_state_t *state, policy_parser_processor_t proc, const void *arg) {
+__attribute__((warn_unused_result)) static inline int execute_processor(
+    policy_parser_state_t* state, policy_parser_processor_t proc,
+    const void* arg) {
     int ret = proc(state, arg);
 
     // if the processor is done, pop the stack
@@ -441,20 +400,19 @@ execute_processor(policy_parser_state_t *state, policy_parser_processor_t proc, 
     return ret;
 }
 
-// p2pkh                     ==> legacy address (start with 1 on mainnet, m or n on testnet)
-// p2sh (also nested segwit) ==> legacy script  (start with 3 on mainnet, 2 on testnet)
-// p2wpkh or p2wsh           ==> bech32         (sart with bc1 on mainnet, tb1 on testnet)
+// p2pkh                     ==> legacy address (start with 1 on mainnet, m or n
+// on testnet) p2sh (also nested segwit) ==> legacy script  (start with 3 on
+// mainnet, 2 on testnet) p2wpkh or p2wsh           ==> bech32         (sart
+// with bc1 on mainnet, tb1 on testnet)
 
-// convenience function, split from get_derived_pubkey only to improve stack usage
-// returns:
-// -1 on error
-// 0 if the Fingerprint is known
-// len of the derivation path if the fingerprint is unknown
-__attribute__((noinline, warn_unused_result)) int get_extended_pubkey_from_client(
-    dispatcher_context_t *dispatcher_context,
-    const wallet_derivation_info_t *wdi,
-    int key_index,
-    serialized_extended_pubkey_t *out) {
+// convenience function, split from get_derived_pubkey only to improve stack
+// usage returns: -1 on error 0 if the Fingerprint is known len of the
+// derivation path if the fingerprint is unknown
+__attribute__((noinline, warn_unused_result)) int
+get_extended_pubkey_from_client(dispatcher_context_t* dispatcher_context,
+                                const wallet_derivation_info_t* wdi,
+                                int key_index,
+                                serialized_extended_pubkey_t* out) {
     PRINT_STACK_POINTER();
 
     policy_map_key_info_t key_info;
@@ -462,12 +420,9 @@ __attribute__((noinline, warn_unused_result)) int get_extended_pubkey_from_clien
     {
         char key_info_str[MAX_POLICY_KEY_INFO_LEN];
 
-        int key_info_len = call_get_merkle_leaf_element(dispatcher_context,
-                                                        wdi->keys_merkle_root,
-                                                        wdi->n_keys,
-                                                        key_index,
-                                                        (uint8_t *) key_info_str,
-                                                        sizeof(key_info_str));
+        int key_info_len = call_get_merkle_leaf_element(
+            dispatcher_context, wdi->keys_merkle_root, wdi->n_keys, key_index,
+            (uint8_t*)key_info_str, sizeof(key_info_str));
         if (key_info_len == -1) {
             return -1;
         }
@@ -475,7 +430,8 @@ __attribute__((noinline, warn_unused_result)) int get_extended_pubkey_from_clien
         // Make a sub-buffer for the pubkey info
         buffer_t key_info_buffer = buffer_create(key_info_str, key_info_len);
 
-        if (parse_policy_map_key_info(&key_info_buffer, &key_info, wdi->wallet_version) == -1) {
+        if (parse_policy_map_key_info(&key_info_buffer, &key_info,
+                                      wdi->wallet_version) == -1) {
             return -1;
         }
     }
@@ -501,19 +457,16 @@ __attribute__((noinline, warn_unused_result)) int get_extended_pubkey_from_clien
 }
 
 __attribute__((warn_unused_result)) static int get_derived_pubkey(
-    dispatcher_context_t *dispatcher_context,
-    const wallet_derivation_info_t *wdi,
-    const policy_node_keyexpr_t *key_expr,
+    dispatcher_context_t* dispatcher_context,
+    const wallet_derivation_info_t* wdi, const policy_node_keyexpr_t* key_expr,
     uint8_t out[static 33]) {
     PRINT_STACK_POINTER();
     int derive_len = 0;
     serialized_extended_pubkey_t ext_pubkey;
 
     if (key_expr->type == KEY_EXPRESSION_NORMAL) {
-        derive_len = get_extended_pubkey_from_client(dispatcher_context,
-                                                     wdi,
-                                                     key_expr->k.key_index,
-                                                     &ext_pubkey);
+        derive_len = get_extended_pubkey_from_client(
+            dispatcher_context, wdi, key_expr->k.key_index, &ext_pubkey);
         if (0 > derive_len) {
             return -1;
         }
@@ -526,14 +479,13 @@ __attribute__((warn_unused_result)) static int get_derived_pubkey(
     // only key in keyinfo has derive info will do
     // if not, just transfer the pubkey
     if (derive_len > 0) {
-        if (0 > derive_first_step_for_pubkey(&ext_pubkey,
-                                             key_expr,
-                                             wdi->sign_psbt_cache,
-                                             wdi->change,
+        if (0 > derive_first_step_for_pubkey(&ext_pubkey, key_expr,
+                                             wdi->sign_psbt_cache, wdi->change,
                                              &ext_pubkey)) {
             return -1;
         }
-        if (0 > bip32_CKDpub(&ext_pubkey, wdi->address_index, &ext_pubkey, NULL)) {
+        if (0 >
+            bip32_CKDpub(&ext_pubkey, wdi->address_index, &ext_pubkey, NULL)) {
             return -1;
         }
     }
@@ -542,24 +494,26 @@ __attribute__((warn_unused_result)) static int get_derived_pubkey(
     return 0;
 }
 
-static void update_output(policy_parser_state_t *state, const uint8_t *data, size_t data_len) {
-    policy_parser_node_state_t *node = &state->nodes[state->node_stack_eos];
+static void update_output(policy_parser_state_t* state, const uint8_t* data,
+                          size_t data_len) {
+    policy_parser_node_state_t* node = &state->nodes[state->node_stack_eos];
     node->length += data_len;
     if (state->hash_context != NULL) {
         crypto_hash_update(state->hash_context, data, data_len);
     }
 }
 
-static inline void update_output_u8(policy_parser_state_t *state, uint8_t data) {
+static inline void update_output_u8(policy_parser_state_t* state,
+                                    uint8_t data) {
     update_output(state, &data, 1);
 }
 
 // outputs the minimal push opcode for an unsigned 32bit integer
-static void update_output_push_u32(policy_parser_state_t *state, uint32_t n) {
+static void update_output_push_u32(policy_parser_state_t* state, uint32_t n) {
     if (n == 0) {
         update_output_u8(state, OP_0);
     } else if (n <= 16) {
-        update_output_u8(state, 0x50 + (uint8_t) n);
+        update_output_u8(state, 0x50 + (uint8_t)n);
     } else {
         uint8_t n_le[4];
         write_u32_le(n_le, 0, n);
@@ -579,19 +533,20 @@ static void update_output_push_u32(policy_parser_state_t *state, uint32_t n) {
         if (byte_size < 5) {
             update_output(state, n_le, byte_size);
         } else {
-            // Since numbers are signed little endian, unsigned numbers bigger than 0x7FFFFFFF
-            // need an extra 0x00 byte.
+            // Since numbers are signed little endian, unsigned numbers bigger
+            // than 0x7FFFFFFF need an extra 0x00 byte.
             update_output(state, n_le, 4);
             update_output_u8(state, 0);
         }
     }
 }
 
-static void update_output_op_v(policy_parser_state_t *state, uint8_t op) {
-    const policy_parser_node_state_t *node = &state->nodes[state->node_stack_eos];
+static void update_output_op_v(policy_parser_state_t* state, uint8_t op) {
+    const policy_parser_node_state_t* node =
+        &state->nodes[state->node_stack_eos];
     if (node->flags & PROCESSOR_FLAG_V) {
-        if (op == OP_CHECKSIG || op == OP_CHECKMULTISIG || op == OP_NUMEQUAL || op == OP_EQUAL ||
-            op == OP_CHECKSIGVERIFY) {
+        if (op == OP_CHECKSIG || op == OP_CHECKMULTISIG || op == OP_NUMEQUAL ||
+            op == OP_EQUAL || op == OP_CHECKSIGVERIFY) {
             // the _VERIFY versions of the opcodes are all 1 larger
             update_output_u8(state, op + 1);
         } else {
@@ -603,11 +558,12 @@ static void update_output_op_v(policy_parser_state_t *state, uint8_t op) {
     }
 }
 
-__attribute__((warn_unused_result)) static int process_generic_node(policy_parser_state_t *state,
-                                                                    const void *arg) {
-    policy_parser_node_state_t *node = &state->nodes[state->node_stack_eos];
+__attribute__((warn_unused_result)) static int process_generic_node(
+    policy_parser_state_t* state, const void* arg) {
+    policy_parser_node_state_t* node = &state->nodes[state->node_stack_eos];
 
-    const generic_processor_command_t *commands = (const generic_processor_command_t *) arg;
+    const generic_processor_command_t* commands =
+        (const generic_processor_command_t*)arg;
 
     size_t n_commands = 0;
     while (commands[n_commands].code != CMD_CODE_END) ++n_commands;
@@ -630,30 +586,34 @@ __attribute__((warn_unused_result)) static int process_generic_node(policy_parse
                 break;
             }
             case CMD_CODE_PUSH_PK: {
-                const policy_node_with_key_t *policy =
-                    (const policy_node_with_key_t *) node->policy_node;
+                const policy_node_with_key_t* policy =
+                    (const policy_node_with_key_t*)node->policy_node;
                 uint8_t compressed_pubkey[33];
-                if (-1 == get_derived_pubkey(state->dispatcher_context,
-                                             state->wdi,
-                                             r_policy_node_keyexpr(&policy->key),
-                                             compressed_pubkey)) {
+                if (-1 ==
+                    get_derived_pubkey(state->dispatcher_context, state->wdi,
+                                       r_policy_node_keyexpr(&policy->key),
+                                       compressed_pubkey)) {
                     return -1;
                 }
                 if (!state->is_taproot) {
                     update_output_u8(state, 33);  // PUSH 33 bytes
                     update_output(state, compressed_pubkey, 33);
                 } else {
-                    if (state->st->bbn_action_type == BBN_POLICY_STAKE_TRANSFER ||
+                    if (state->st->bbn_action_type ==
+                            BBN_POLICY_STAKE_TRANSFER ||
                         state->st->bbn_action_type == BBN_POLICY_SLASHING ||
-                        state->st->bbn_action_type == BBN_POLICY_SLASHING_UNBONDING ||
+                        state->st->bbn_action_type ==
+                            BBN_POLICY_SLASHING_UNBONDING ||
                         state->st->bbn_action_type == BBN_POLICY_UNBOND) {
                         if (state->st->psbt_staker_pk_state == 0 ||
                             state->st->psbt_finality_pk_state == 0) {
                             if (state->st->psbt_staker_pk_state == 0) {
-                                memcpy(state->st->psbt_staker_pk, compressed_pubkey + 1, 32);
+                                memcpy(state->st->psbt_staker_pk,
+                                       compressed_pubkey + 1, 32);
                                 state->st->psbt_staker_pk_state = 1;
                             } else {
-                                memcpy(state->st->psbt_finality_pk, compressed_pubkey, 32);
+                                memcpy(state->st->psbt_finality_pk,
+                                       compressed_pubkey, 32);
                                 state->st->psbt_finality_pk_state = 1;
                             }
                         }
@@ -665,20 +625,22 @@ __attribute__((warn_unused_result)) static int process_generic_node(policy_parse
                 break;
             }
             case CMD_CODE_PUSH_PKH: {
-                const policy_node_with_key_t *policy =
-                    (const policy_node_with_key_t *) node->policy_node;
+                const policy_node_with_key_t* policy =
+                    (const policy_node_with_key_t*)node->policy_node;
                 uint8_t compressed_pubkey[33];
-                if (-1 == get_derived_pubkey(state->dispatcher_context,
-                                             state->wdi,
-                                             r_policy_node_keyexpr(&policy->key),
-                                             compressed_pubkey)) {
+                if (-1 ==
+                    get_derived_pubkey(state->dispatcher_context, state->wdi,
+                                       r_policy_node_keyexpr(&policy->key),
+                                       compressed_pubkey)) {
                     return -1;
                 }
                 if (!state->is_taproot) {
-                    crypto_hash160(compressed_pubkey, 33, compressed_pubkey);  // reuse memory
+                    crypto_hash160(compressed_pubkey, 33,
+                                   compressed_pubkey);  // reuse memory
                 } else {
                     // x-only pubkey if within taproot
-                    crypto_hash160(compressed_pubkey + 1, 32, compressed_pubkey);  // reuse memory
+                    crypto_hash160(compressed_pubkey + 1, 32,
+                                   compressed_pubkey);  // reuse memory
                 }
 
                 update_output_u8(state, 20);  // PUSH 20 bytes
@@ -686,8 +648,8 @@ __attribute__((warn_unused_result)) static int process_generic_node(policy_parse
                 break;
             }
             case CMD_CODE_PUSH_UINT32: {
-                const policy_node_with_uint32_t *policy =
-                    (const policy_node_with_uint32_t *) node->policy_node;
+                const policy_node_with_uint32_t* policy =
+                    (const policy_node_with_uint32_t*)node->policy_node;
                 update_output_push_u32(state, policy->n);
                 if (state->st->psbt_timelock_state == 1) {
                     state->st->psbt_timelock = policy->n;
@@ -696,43 +658,45 @@ __attribute__((warn_unused_result)) static int process_generic_node(policy_parse
                 break;
             }
             case CMD_CODE_PUSH_HASH20: {
-                const policy_node_with_hash_160_t *policy =
-                    (const policy_node_with_hash_160_t *) node->policy_node;
+                const policy_node_with_hash_160_t* policy =
+                    (const policy_node_with_hash_160_t*)node->policy_node;
                 update_output_u8(state, 20);
                 update_output(state, policy->h, 20);
                 break;
             }
             case CMD_CODE_PUSH_HASH32: {
-                const policy_node_with_hash_256_t *policy =
-                    (const policy_node_with_hash_256_t *) node->policy_node;
+                const policy_node_with_hash_256_t* policy =
+                    (const policy_node_with_hash_256_t*)node->policy_node;
                 update_output_u8(state, 32);
                 update_output(state, policy->h, 32);
                 break;
             }
             case CMD_CODE_PROCESS_CHILD: {
-                const policy_node_with_scripts_t *policy =
-                    (const policy_node_with_scripts_t *) node->policy_node;
-                if (0 > state_stack_push(state, r_policy_node(&policy->scripts[cmd_data]), 0)) {
+                const policy_node_with_scripts_t* policy =
+                    (const policy_node_with_scripts_t*)node->policy_node;
+                if (0 >
+                    state_stack_push(
+                        state, r_policy_node(&policy->scripts[cmd_data]), 0)) {
                     return -1;
                 }
                 break;
             }
             case CMD_CODE_PROCESS_CHILD_V: {
-                const policy_node_with_scripts_t *policy =
-                    (const policy_node_with_scripts_t *) node->policy_node;
-                if (0 > state_stack_push(state,
-                                         r_policy_node(&policy->scripts[cmd_data]),
-                                         node->flags)) {
+                const policy_node_with_scripts_t* policy =
+                    (const policy_node_with_scripts_t*)node->policy_node;
+                if (0 > state_stack_push(
+                            state, r_policy_node(&policy->scripts[cmd_data]),
+                            node->flags)) {
                     return -1;
                 }
                 break;
             }
             case CMD_CODE_PROCESS_CHILD_VV: {
-                const policy_node_with_scripts_t *policy =
-                    (const policy_node_with_scripts_t *) node->policy_node;
-                if (0 > state_stack_push(state,
-                                         r_policy_node(&policy->scripts[cmd_data]),
-                                         node->flags | PROCESSOR_FLAG_V)) {
+                const policy_node_with_scripts_t* policy =
+                    (const policy_node_with_scripts_t*)node->policy_node;
+                if (0 > state_stack_push(
+                            state, r_policy_node(&policy->scripts[cmd_data]),
+                            node->flags | PROCESSOR_FLAG_V)) {
                     return -1;
                 }
                 break;
@@ -746,23 +710,22 @@ __attribute__((warn_unused_result)) static int process_generic_node(policy_parse
     }
 }
 
-__attribute__((warn_unused_result)) static int process_pkh_wpkh_node(policy_parser_state_t *state,
-                                                                     const void *arg) {
+__attribute__((warn_unused_result)) static int process_pkh_wpkh_node(
+    policy_parser_state_t* state, const void* arg) {
     UNUSED(arg);
 
     PRINT_STACK_POINTER();
 
-    policy_parser_node_state_t *node = &state->nodes[state->node_stack_eos];
+    policy_parser_node_state_t* node = &state->nodes[state->node_stack_eos];
 
     if (node->step != 0) {
         return -1;
     }
 
-    policy_node_with_key_t *policy = (policy_node_with_key_t *) node->policy_node;
+    policy_node_with_key_t* policy = (policy_node_with_key_t*)node->policy_node;
 
     uint8_t compressed_pubkey[33];
-    if (-1 == get_derived_pubkey(state->dispatcher_context,
-                                 state->wdi,
+    if (-1 == get_derived_pubkey(state->dispatcher_context, state->wdi,
                                  r_policy_node_keyexpr(&policy->key),
                                  compressed_pubkey)) {
         return -1;
@@ -773,10 +736,12 @@ __attribute__((warn_unused_result)) static int process_pkh_wpkh_node(policy_pars
         update_output_u8(state, 20);  // PUSH 20 bytes
 
         if (!state->is_taproot) {
-            crypto_hash160(compressed_pubkey, 33, compressed_pubkey);  // reuse memory
+            crypto_hash160(compressed_pubkey, 33,
+                           compressed_pubkey);  // reuse memory
         } else {
             // x-only pubkey if within taproot
-            crypto_hash160(compressed_pubkey + 1, 32, compressed_pubkey);  // reuse memory
+            crypto_hash160(compressed_pubkey + 1, 32,
+                           compressed_pubkey);  // reuse memory
         }
         update_output(state, compressed_pubkey, 20);
 
@@ -792,21 +757,23 @@ __attribute__((warn_unused_result)) static int process_pkh_wpkh_node(policy_pars
 
         update_output_u8(state, 20);  // PUSH 20 bytes
 
-        crypto_hash160(compressed_pubkey, 33, compressed_pubkey);  // reuse memory
+        crypto_hash160(compressed_pubkey, 33,
+                       compressed_pubkey);  // reuse memory
         update_output(state, compressed_pubkey, 20);
     }
 
     return 1;
 }
 
-__attribute__((warn_unused_result)) static int process_thresh_node(policy_parser_state_t *state,
-                                                                   const void *arg) {
+__attribute__((warn_unused_result)) static int process_thresh_node(
+    policy_parser_state_t* state, const void* arg) {
     UNUSED(arg);
 
     PRINT_STACK_POINTER();
 
-    policy_parser_node_state_t *node = &state->nodes[state->node_stack_eos];
-    const policy_node_thresh_t *policy = (const policy_node_thresh_t *) node->policy_node;
+    policy_parser_node_state_t* node = &state->nodes[state->node_stack_eos];
+    const policy_node_thresh_t* policy =
+        (const policy_node_thresh_t*)node->policy_node;
 
     // [X1] [X2] ADD ... [Xn] ADD <k> EQUAL
 
@@ -816,26 +783,31 @@ __attribute__((warn_unused_result)) static int process_thresh_node(policy_parser
       must emit the child script as its last thing. The natural way of splitting
       this would be:
 
-      [X1]   /   [X2] ADD   /   [X3] ADD   /   ...   /   [Xn] ADD   /   <k> EQUAL
+      [X1]   /   [X2] ADD   /   [X3] ADD   /   ...   /   [Xn] ADD   /   <k>
+      EQUAL
 
       Instead, we have to split it as follows:
 
-      [X1]   /   [X2]   /   ADD [X3]   /   ...   /   ADD [Xn]   /   ADD <k> EQUAL
+      [X1]   /   [X2]   /   ADD [X3]   /   ...   /   ADD [Xn]   /   ADD <k>
+      EQUAL
 
       But this is incorrect if n == 1, because the correct encoding is just
 
       [X1] <k> EQUAL
 
-      Therefore, the case n == 1 needs to be handled separately to avoid the extra ADD.
+      Therefore, the case n == 1 needs to be handled separately to avoid the
+      extra ADD.
     */
 
     // n+1 steps
-    // at step i, for 0 <= i < n, we produce [Xi] if i <= 1, or ADD [Xi] otherwise
-    // at step n, we produce <k> EQUAL if n == 1, or ADD <k> EQUAL otherwise
+    // at step i, for 0 <= i < n, we produce [Xi] if i <= 1, or ADD [Xi]
+    // otherwise at step n, we produce <k> EQUAL if n == 1, or ADD <k> EQUAL
+    // otherwise
 
     if (node->step < policy->n) {
         // find the current child node
-        policy_node_scriptlist_t *cur = r_policy_node_scriptlist(&policy->scriptlist);
+        policy_node_scriptlist_t* cur =
+            r_policy_node_scriptlist(&policy->scriptlist);
         LEDGER_ASSERT(cur != NULL, "This should never happen");
         for (size_t i = 0; i < node->step; i++) {
             cur = r_policy_node_scriptlist(&cur->next);
@@ -865,14 +837,14 @@ __attribute__((warn_unused_result)) static int process_thresh_node(policy_parser
 }
 
 __attribute__((warn_unused_result)) static int process_multi_sortedmulti_node(
-    policy_parser_state_t *state,
-    const void *arg) {
+    policy_parser_state_t* state, const void* arg) {
     UNUSED(arg);
 
     PRINT_STACK_POINTER();
 
-    policy_parser_node_state_t *node = &state->nodes[state->node_stack_eos];
-    const policy_node_multisig_t *policy = (const policy_node_multisig_t *) node->policy_node;
+    policy_parser_node_state_t* node = &state->nodes[state->node_stack_eos];
+    const policy_node_multisig_t* policy =
+        (const policy_node_multisig_t*)node->policy_node;
 
     if (policy->n > 16) {
         return WITH_ERROR(-1, "Implemented only for n <= 16");
@@ -890,35 +862,38 @@ __attribute__((warn_unused_result)) static int process_multi_sortedmulti_node(
         uint8_t compressed_pubkey[33];
 
         if (policy->base.type == TOKEN_MULTI) {
-            if (-1 == get_derived_pubkey(state->dispatcher_context,
-                                         state->wdi,
-                                         &r_policy_node_keyexpr(&policy->keys)[i],
-                                         compressed_pubkey)) {
+            if (-1 ==
+                get_derived_pubkey(state->dispatcher_context, state->wdi,
+                                   &r_policy_node_keyexpr(&policy->keys)[i],
+                                   compressed_pubkey)) {
                 return -1;
             }
         } else {
-            // sortedmulti is problematic, especially for very large wallets: we don't have enough
-            // memory on Nano S to keep all the keys in memory. Therefore, we use a slow method: at
-            // each iteration, find the lexicographically smallest key that was not already used
-            // (basically, like in insertion sort). This means quadratic communication with the
-            // client, and a quadratic number of pubkey derivations as well, which are quite slow.
-            // Performance might become an issue for very large multisig wallets, but this allows us
-            // to remove any limitation on the supported number of pubkeys, and to keep the code
-            // simple.
-            // Should speed be reported as an issue in practice, sorting could be done in-memory for
-            // non-Nano S devices, instead (requiring 33*MAX_PUBKEYS_PER_MULTISIG > 500 bytes more
-            // memory).
+            // sortedmulti is problematic, especially for very large wallets: we
+            // don't have enough memory on Nano S to keep all the keys in
+            // memory. Therefore, we use a slow method: at each iteration, find
+            // the lexicographically smallest key that was not already used
+            // (basically, like in insertion sort). This means quadratic
+            // communication with the client, and a quadratic number of pubkey
+            // derivations as well, which are quite slow. Performance might
+            // become an issue for very large multisig wallets, but this allows
+            // us to remove any limitation on the supported number of pubkeys,
+            // and to keep the code simple. Should speed be reported as an issue
+            // in practice, sorting could be done in-memory for non-Nano S
+            // devices, instead (requiring 33*MAX_PUBKEYS_PER_MULTISIG > 500
+            // bytes more memory).
 
             int smallest_pubkey_index = -1;
-            memset(compressed_pubkey, 0xFF, sizeof(compressed_pubkey));  // init to largest value
+            memset(compressed_pubkey, 0xFF,
+                   sizeof(compressed_pubkey));  // init to largest value
 
             for (int j = 0; j < policy->n; j++) {
                 if (!bitvector_get(used, j)) {
                     uint8_t cur_pubkey[33];
-                    if (-1 == get_derived_pubkey(state->dispatcher_context,
-                                                 state->wdi,
-                                                 &r_policy_node_keyexpr(&policy->keys)[j],
-                                                 cur_pubkey)) {
+                    if (-1 == get_derived_pubkey(
+                                  state->dispatcher_context, state->wdi,
+                                  &r_policy_node_keyexpr(&policy->keys)[j],
+                                  cur_pubkey)) {
                         return -1;
                     }
                     if (cmp_arrays(compressed_pubkey, cur_pubkey, 33) > 0) {
@@ -927,7 +902,8 @@ __attribute__((warn_unused_result)) static int process_multi_sortedmulti_node(
                     }
                 }
             }
-            bitvector_set(used, smallest_pubkey_index, true);  // mark the key as used
+            bitvector_set(used, smallest_pubkey_index,
+                          true);  // mark the key as used
         }
 
         // push <i-th pubkey> (33 = 0x21 bytes)
@@ -941,9 +917,8 @@ __attribute__((warn_unused_result)) static int process_multi_sortedmulti_node(
     return 1;
 }
 
-static int cov_push_compressed_pubkey_to_bbn_buffer(const uint8_t *compressed_pubkey,
-                                                    sign_psbt_state_t *st,
-                                                    int index) {
+static int cov_push_compressed_pubkey_to_bbn_buffer(
+    const uint8_t* compressed_pubkey, sign_psbt_state_t* st, int index) {
     // BBN-#01 Unimplemented or partially implemented function
     // The original comment is generated by the code helper
     // This function is used to push a compressed public key to the buffer
@@ -955,20 +930,22 @@ static int cov_push_compressed_pubkey_to_bbn_buffer(const uint8_t *compressed_pu
     return index;
 }
 
-__attribute__((warn_unused_result)) static int process_multi_a_sortedmulti_a_node(
-    policy_parser_state_t *state,
-    const void *arg) {
+__attribute__((warn_unused_result)) static int
+process_multi_a_sortedmulti_a_node(policy_parser_state_t* state,
+                                   const void* arg) {
     UNUSED(arg);
 
     PRINT_STACK_POINTER();
-    policy_parser_node_state_t *node = &state->nodes[state->node_stack_eos];
-    const policy_node_multisig_t *policy = (const policy_node_multisig_t *) node->policy_node;
+    policy_parser_node_state_t* node = &state->nodes[state->node_stack_eos];
+    const policy_node_multisig_t* policy =
+        (const policy_node_multisig_t*)node->policy_node;
 
     if (policy->k > 16) {
         return WITH_ERROR(-1, "Implemented only for k <= 16");
     }
 
-    // <pk_1> OP_CHECKSIG <pk_2> OP_CHECKSIGADD ... <pk_n> OP_CHECKSIGADD <k> OP_NUMEQUAL
+    // <pk_1> OP_CHECKSIG <pk_2> OP_CHECKSIGADD ... <pk_n> OP_CHECKSIGADD <k>
+    // OP_NUMEQUAL
 
     // bitvector of used keys (only relevant for sorting keys in SORTEDMULTI)
     uint8_t used[BITVECTOR_REAL_SIZE(MAX_PUBKEYS_PER_MULTISIG)];
@@ -977,39 +954,44 @@ __attribute__((warn_unused_result)) static int process_multi_a_sortedmulti_a_nod
         uint8_t compressed_pubkey[33];
 
         if (policy->base.type == TOKEN_MULTI_A) {
-            if (-1 == get_derived_pubkey(state->dispatcher_context,
-                                         state->wdi,
-                                         &r_policy_node_keyexpr(&policy->keys)[i],
-                                         compressed_pubkey)) {
+            if (-1 ==
+                get_derived_pubkey(state->dispatcher_context, state->wdi,
+                                   &r_policy_node_keyexpr(&policy->keys)[i],
+                                   compressed_pubkey)) {
                 return -1;
             }
         } else {
-            // Inefficient O(n^2) sorting; check process_multi_sortedmulti_node for the motivation.
+            // Inefficient O(n^2) sorting; check process_multi_sortedmulti_node
+            // for the motivation.
 
             int smallest_pubkey_index = -1;
-            memset(compressed_pubkey, 0xFF, sizeof(compressed_pubkey));  // init to largest value
+            memset(compressed_pubkey, 0xFF,
+                   sizeof(compressed_pubkey));  // init to largest value
 
             for (int j = 0; j < policy->n; j++) {
                 if (!bitvector_get(used, j)) {
                     uint8_t cur_pubkey[33];
-                    if (-1 == get_derived_pubkey(state->dispatcher_context,
-                                                 state->wdi,
-                                                 &r_policy_node_keyexpr(&policy->keys)[j],
-                                                 cur_pubkey)) {
+                    if (-1 == get_derived_pubkey(
+                                  state->dispatcher_context, state->wdi,
+                                  &r_policy_node_keyexpr(&policy->keys)[j],
+                                  cur_pubkey)) {
                         return -1;
                     }
                     // x-only pubkeys must be compared ignoring the first byte
-                    if (cmp_arrays(compressed_pubkey + 1, cur_pubkey + 1, 32) > 0) {
+                    if (cmp_arrays(compressed_pubkey + 1, cur_pubkey + 1, 32) >
+                        0) {
                         memcpy(compressed_pubkey, cur_pubkey, 33);
                         smallest_pubkey_index = j;
                     }
                 }
             }
-            bitvector_set(used, smallest_pubkey_index, true);  // mark the key as used
+            bitvector_set(used, smallest_pubkey_index,
+                          true);  // mark the key as used
         }
 
         // chester
-        if (cov_push_compressed_pubkey_to_bbn_buffer(compressed_pubkey, state->st, i) < 0) {
+        if (cov_push_compressed_pubkey_to_bbn_buffer(compressed_pubkey,
+                                                     state->st, i) < 0) {
             return -1;
         }
         // push <i-th pubkey> as x-only key (32 = 0x20 bytes)
@@ -1036,22 +1018,17 @@ __attribute__((warn_unused_result)) static int process_multi_a_sortedmulti_a_nod
 }
 
 __attribute__((warn_unused_result, noinline)) static int compute_tapleaf_hash(
-    dispatcher_context_t *dispatcher_context,
-    sign_psbt_state_t *st,
-    const wallet_derivation_info_t *wdi,
-    const policy_node_t *script_policy,
+    dispatcher_context_t* dispatcher_context, sign_psbt_state_t* st,
+    const wallet_derivation_info_t* wdi, const policy_node_t* script_policy,
     uint8_t out[static 32]) {
     cx_sha256_t hash_context;
     crypto_tr_tapleaf_hash_init(&hash_context);
 
     // we compute the tapscript once just to compute its length
     // this avoids having to store the script in memory
-    int tapscript_len = get_wallet_internal_script_hash(dispatcher_context,
-                                                        st,
-                                                        script_policy,
-                                                        wdi,
-                                                        WRAPPED_SCRIPT_TYPE_TAPSCRIPT,
-                                                        NULL);
+    int tapscript_len = get_wallet_internal_script_hash(
+        dispatcher_context, st, script_policy, wdi,
+        WRAPPED_SCRIPT_TYPE_TAPSCRIPT, NULL);
 
     if (tapscript_len < 0) {
         return WITH_ERROR(-1, "Failed to compute tapleaf script");
@@ -1060,13 +1037,11 @@ __attribute__((warn_unused_result, noinline)) static int compute_tapleaf_hash(
     crypto_hash_update_u8(&hash_context.header, 0xC0);
     crypto_hash_update_varint(&hash_context.header, tapscript_len);
 
-    if (0 > get_wallet_internal_script_hash(dispatcher_context,
-                                            st,
-                                            script_policy,
-                                            wdi,
-                                            WRAPPED_SCRIPT_TYPE_TAPSCRIPT,
-                                            &hash_context.header)) {
-        return WITH_ERROR(-1, "Failed to compute tapscript hash");  // should never happen!
+    if (0 > get_wallet_internal_script_hash(
+                dispatcher_context, st, script_policy, wdi,
+                WRAPPED_SCRIPT_TYPE_TAPSCRIPT, &hash_context.header)) {
+        return WITH_ERROR(
+            -1, "Failed to compute tapscript hash");  // should never happen!
     }
 
     crypto_hash_digest(&hash_context.header, out, 32);
@@ -1074,29 +1049,31 @@ __attribute__((warn_unused_result, noinline)) static int compute_tapleaf_hash(
 }
 
 // Separated from compute_taptree_hash to optimize its stack usage
-__attribute__((warn_unused_result, noinline)) static int compute_and_combine_taptree_child_hashes(
-    dispatcher_context_t *dc,
-    sign_psbt_state_t *st,
-    const wallet_derivation_info_t *wdi,
-    const policy_node_tree_t *tree,
-    uint8_t out[static 32]) {
+__attribute__((warn_unused_result, noinline)) static int
+compute_and_combine_taptree_child_hashes(dispatcher_context_t* dc,
+                                         sign_psbt_state_t* st,
+                                         const wallet_derivation_info_t* wdi,
+                                         const policy_node_tree_t* tree,
+                                         uint8_t out[static 32]) {
     uint8_t left_h[32], right_h[32];
-    if (0 > compute_taptree_hash(dc, st, wdi, r_policy_node_tree(&tree->left_tree), left_h))
+    if (0 > compute_taptree_hash(dc, st, wdi,
+                                 r_policy_node_tree(&tree->left_tree), left_h))
         return -1;
-    if (0 > compute_taptree_hash(dc, st, wdi, r_policy_node_tree(&tree->right_tree), right_h))
+    if (0 > compute_taptree_hash(
+                dc, st, wdi, r_policy_node_tree(&tree->right_tree), right_h))
         return -1;
     crypto_tr_combine_taptree_hashes(left_h, right_h, out);
     return 0;
 }
 
 // See taproot_tree_helper in BIP-0341
-__attribute__((noinline)) int compute_taptree_hash(dispatcher_context_t *dc,
-                                                   sign_psbt_state_t *st,
-                                                   const wallet_derivation_info_t *wdi,
-                                                   const policy_node_tree_t *tree,
-                                                   uint8_t out[static 32]) {
+__attribute__((noinline)) int compute_taptree_hash(
+    dispatcher_context_t* dc, sign_psbt_state_t* st,
+    const wallet_derivation_info_t* wdi, const policy_node_tree_t* tree,
+    uint8_t out[static 32]) {
     if (tree->is_leaf)
-        return compute_tapleaf_hash(dc, st, wdi, r_policy_node(&tree->script), out);
+        return compute_tapleaf_hash(dc, st, wdi, r_policy_node(&tree->script),
+                                    out);
     else
         return compute_and_combine_taptree_child_hashes(dc, st, wdi, tree, out);
 }
@@ -1105,9 +1082,9 @@ __attribute__((noinline)) int compute_taptree_hash(dispatcher_context_t *dc,
 // make sure that the compiler gives an error if any PolicyNodeType is missed
 #pragma GCC diagnostic error "-Wswitch-enum"
 
-int get_wallet_script(dispatcher_context_t *dispatcher_context,
-                      const policy_node_t *policy,
-                      const wallet_derivation_info_t *wdi,
+int get_wallet_script(dispatcher_context_t* dispatcher_context,
+                      const policy_node_t* policy,
+                      const wallet_derivation_info_t* wdi,
                       uint8_t out[static 34]) {
     int script_type = -1;
 
@@ -1116,9 +1093,8 @@ int get_wallet_script(dispatcher_context_t *dispatcher_context,
 
     if (policy->type == TOKEN_PKH) {
         uint8_t compressed_pubkey[33];
-        policy_node_with_key_t *pkh_policy = (policy_node_with_key_t *) policy;
-        if (0 > get_derived_pubkey(dispatcher_context,
-                                   wdi,
+        policy_node_with_key_t* pkh_policy = (policy_node_with_key_t*)policy;
+        if (0 > get_derived_pubkey(dispatcher_context, wdi,
                                    r_policy_node_keyexpr(&pkh_policy->key),
                                    compressed_pubkey)) {
             return -1;
@@ -1135,9 +1111,8 @@ int get_wallet_script(dispatcher_context_t *dispatcher_context,
         return 25;
     } else if (policy->type == TOKEN_WPKH) {
         uint8_t compressed_pubkey[33];
-        policy_node_with_key_t *wpkh_policy = (policy_node_with_key_t *) policy;
-        if (0 > get_derived_pubkey(dispatcher_context,
-                                   wdi,
+        policy_node_with_key_t* wpkh_policy = (policy_node_with_key_t*)policy;
+        if (0 > get_derived_pubkey(dispatcher_context, wdi,
                                    r_policy_node_keyexpr(&wpkh_policy->key),
                                    compressed_pubkey)) {
             return -1;
@@ -1149,27 +1124,26 @@ int get_wallet_script(dispatcher_context_t *dispatcher_context,
 
         return 22;
     } else if (policy->type == TOKEN_SH || policy->type == TOKEN_WSH) {
-        const policy_node_t *core_policy;
+        const policy_node_t* core_policy;
         if (policy->type == TOKEN_SH) {
-            const policy_node_t *child =
-                r_policy_node(&((const policy_node_with_script_t *) policy)->script);
+            const policy_node_t* child = r_policy_node(
+                &((const policy_node_with_script_t*)policy)->script);
             if (child->type == TOKEN_WSH) {
                 script_type = WRAPPED_SCRIPT_TYPE_SH_WSH;
-                core_policy = r_policy_node(&((const policy_node_with_script_t *) child)->script);
+                core_policy = r_policy_node(
+                    &((const policy_node_with_script_t*)child)->script);
             } else {
                 script_type = WRAPPED_SCRIPT_TYPE_SH;
                 core_policy = child;
             }
         } else {  // if (policy->type == TOKEN_WSH
             script_type = WRAPPED_SCRIPT_TYPE_WSH;
-            core_policy = r_policy_node(&((const policy_node_with_script_t *) policy)->script);
+            core_policy = r_policy_node(
+                &((const policy_node_with_script_t*)policy)->script);
         }
 
-        if (0 > get_wallet_internal_script_hash(dispatcher_context,
-                                                NULL,
-                                                core_policy,
-                                                wdi,
-                                                script_type,
+        if (0 > get_wallet_internal_script_hash(dispatcher_context, NULL,
+                                                core_policy, wdi, script_type,
                                                 &hash_context.header)) {
             return -1;
         }
@@ -1184,7 +1158,8 @@ int get_wallet_script(dispatcher_context_t *dispatcher_context,
                     cx_sha256_init(&hash_context);
                     crypto_hash_update_u8(&hash_context.header, OP_0);
 
-                    crypto_hash_update_u8(&hash_context.header, 32);  // PUSH 32 bytes
+                    crypto_hash_update_u8(&hash_context.header,
+                                          32);  // PUSH 32 bytes
                     crypto_hash_update(&hash_context.header, script_hash, 32);
 
                     crypto_hash_digest(&hash_context.header, script_hash, 32);
@@ -1212,11 +1187,10 @@ int get_wallet_script(dispatcher_context_t *dispatcher_context,
             }
         }
     } else if (policy->type == TOKEN_TR) {
-        policy_node_tr_t *tr_policy = (policy_node_tr_t *) policy;
+        policy_node_tr_t* tr_policy = (policy_node_tr_t*)policy;
         uint8_t compressed_pubkey[33];
 
-        if (0 > get_derived_pubkey(dispatcher_context,
-                                   wdi,
+        if (0 > get_derived_pubkey(dispatcher_context, wdi,
                                    r_policy_node_keyexpr(&tr_policy->key),
                                    compressed_pubkey)) {
             return -1;
@@ -1225,13 +1199,11 @@ int get_wallet_script(dispatcher_context_t *dispatcher_context,
         out[1] = 32;  // PUSH 32 bytes
 
         // uint8_t h[32];
-        uint8_t *h = out + 2;  // hack: re-use the output array to save memory
+        uint8_t* h = out + 2;  // hack: re-use the output array to save memory
 
         int h_length = 0;
         if (!isnull_policy_node_tree(&tr_policy->tree)) {
-            if (0 > compute_taptree_hash(dispatcher_context,
-                                         NULL,
-                                         wdi,
+            if (0 > compute_taptree_hash(dispatcher_context, NULL, wdi,
                                          r_policy_node_tree(&tr_policy->tree),
                                          h)) {
                 return -1;
@@ -1240,7 +1212,8 @@ int get_wallet_script(dispatcher_context_t *dispatcher_context,
         }
 
         uint8_t parity;
-        crypto_tr_tweak_pubkey(compressed_pubkey + 1, h, h_length, &parity, out + 2);
+        crypto_tr_tweak_pubkey(compressed_pubkey + 1, h, h_length, &parity,
+                               out + 2);
 
         return 34;
     }
@@ -1250,13 +1223,10 @@ int get_wallet_script(dispatcher_context_t *dispatcher_context,
 }
 
 __attribute__((noinline)) int get_wallet_internal_script_hash(
-    dispatcher_context_t *dispatcher_context,
-    sign_psbt_state_t *st,
-    const policy_node_t *policy,
-    const wallet_derivation_info_t *wdi,
-    internal_script_type_e script_type,
-    cx_hash_t *hash_context) {
-    const uint8_t *whitelist;
+    dispatcher_context_t* dispatcher_context, sign_psbt_state_t* st,
+    const policy_node_t* policy, const wallet_derivation_info_t* wdi,
+    internal_script_type_e script_type, cx_hash_t* hash_context) {
+    const uint8_t* whitelist;
     size_t whitelist_len;
 
     switch (script_type) {
@@ -1281,19 +1251,21 @@ __attribute__((noinline)) int get_wallet_internal_script_hash(
             return -1;
     }
 
-    policy_parser_state_t state = {.dispatcher_context = dispatcher_context,
-                                   .wdi = wdi,
-                                   .is_taproot = (script_type == WRAPPED_SCRIPT_TYPE_TAPSCRIPT),
-                                   .node_stack_eos = 0,
-                                   .hash_context = hash_context,
-                                   .st = st};
+    policy_parser_state_t state = {
+        .dispatcher_context = dispatcher_context,
+        .wdi = wdi,
+        .is_taproot = (script_type == WRAPPED_SCRIPT_TYPE_TAPSCRIPT),
+        .node_stack_eos = 0,
+        .hash_context = hash_context,
+        .st = st};
 
-    state.nodes[0] =
-        (policy_parser_node_state_t){.length = 0, .flags = 0, .step = 0, .policy_node = policy};
+    state.nodes[0] = (policy_parser_node_state_t){
+        .length = 0, .flags = 0, .step = 0, .policy_node = policy};
     // state.st = st;
     int ret;
     do {
-        const policy_parser_node_state_t *node = &state.nodes[state.node_stack_eos];
+        const policy_parser_node_state_t* node =
+            &state.nodes[state.node_stack_eos];
 
         if (node->policy_node == NULL) {
             PRINTF("Unexpected uninitialized policy_node\n");
@@ -1310,25 +1282,29 @@ __attribute__((noinline)) int get_wallet_internal_script_hash(
 
         if (!is_whitelisted) {
             PRINTF("Fragment %d not allowed in script type %d\n",
-                   node->policy_node->type,
-                   script_type);
+                   node->policy_node->type, script_type);
             return -1;
         }
         switch (node->policy_node->type) {
             case TOKEN_0:
-                ret = execute_processor(&state, process_generic_node, commands_0);
+                ret =
+                    execute_processor(&state, process_generic_node, commands_0);
                 break;
             case TOKEN_1:
-                ret = execute_processor(&state, process_generic_node, commands_1);
+                ret =
+                    execute_processor(&state, process_generic_node, commands_1);
                 break;
             case TOKEN_PK_K:
-                ret = execute_processor(&state, process_generic_node, commands_pk_k);
+                ret = execute_processor(&state, process_generic_node,
+                                        commands_pk_k);
                 break;
             case TOKEN_PK_H:
-                ret = execute_processor(&state, process_generic_node, commands_pk_h);
+                ret = execute_processor(&state, process_generic_node,
+                                        commands_pk_h);
                 break;
             case TOKEN_PK:
-                ret = execute_processor(&state, process_generic_node, commands_pk);
+                ret = execute_processor(&state, process_generic_node,
+                                        commands_pk);
                 break;
             case TOKEN_PKH:
             case TOKEN_WPKH:
@@ -1336,49 +1312,63 @@ __attribute__((noinline)) int get_wallet_internal_script_hash(
                 break;
             case TOKEN_OLDER:
                 state.st->psbt_timelock_state++;
-                ret = execute_processor(&state, process_generic_node, commands_older);
+                ret = execute_processor(&state, process_generic_node,
+                                        commands_older);
                 break;
             case TOKEN_AFTER:
-                ret = execute_processor(&state, process_generic_node, commands_after);
+                ret = execute_processor(&state, process_generic_node,
+                                        commands_after);
                 break;
 
             case TOKEN_SHA256:
-                ret = execute_processor(&state, process_generic_node, commands_sha256);
+                ret = execute_processor(&state, process_generic_node,
+                                        commands_sha256);
                 break;
             case TOKEN_HASH256:
-                ret = execute_processor(&state, process_generic_node, commands_hash256);
+                ret = execute_processor(&state, process_generic_node,
+                                        commands_hash256);
                 break;
             case TOKEN_RIPEMD160:
-                ret = execute_processor(&state, process_generic_node, commands_ripemd160);
+                ret = execute_processor(&state, process_generic_node,
+                                        commands_ripemd160);
                 break;
             case TOKEN_HASH160:
-                ret = execute_processor(&state, process_generic_node, commands_hash160);
+                ret = execute_processor(&state, process_generic_node,
+                                        commands_hash160);
                 break;
 
             case TOKEN_ANDOR:
-                ret = execute_processor(&state, process_generic_node, commands_andor);
+                ret = execute_processor(&state, process_generic_node,
+                                        commands_andor);
                 break;
             case TOKEN_AND_V:
-                ret = execute_processor(&state, process_generic_node, commands_and_v);
+                ret = execute_processor(&state, process_generic_node,
+                                        commands_and_v);
                 break;
             case TOKEN_AND_B:
-                ret = execute_processor(&state, process_generic_node, commands_and_b);
+                ret = execute_processor(&state, process_generic_node,
+                                        commands_and_b);
                 break;
             case TOKEN_AND_N:
-                ret = execute_processor(&state, process_generic_node, commands_and_n);
+                ret = execute_processor(&state, process_generic_node,
+                                        commands_and_n);
                 break;
 
             case TOKEN_OR_B:
-                ret = execute_processor(&state, process_generic_node, commands_or_b);
+                ret = execute_processor(&state, process_generic_node,
+                                        commands_or_b);
                 break;
             case TOKEN_OR_C:
-                ret = execute_processor(&state, process_generic_node, commands_or_c);
+                ret = execute_processor(&state, process_generic_node,
+                                        commands_or_c);
                 break;
             case TOKEN_OR_D:
-                ret = execute_processor(&state, process_generic_node, commands_or_d);
+                ret = execute_processor(&state, process_generic_node,
+                                        commands_or_d);
                 break;
             case TOKEN_OR_I:
-                ret = execute_processor(&state, process_generic_node, commands_or_i);
+                ret = execute_processor(&state, process_generic_node,
+                                        commands_or_i);
                 break;
 
             case TOKEN_THRESH:
@@ -1387,41 +1377,53 @@ __attribute__((noinline)) int get_wallet_internal_script_hash(
 
             case TOKEN_MULTI:
             case TOKEN_SORTEDMULTI:
-                ret = execute_processor(&state, process_multi_sortedmulti_node, NULL);
+                ret = execute_processor(&state, process_multi_sortedmulti_node,
+                                        NULL);
                 break;
             case TOKEN_MULTI_A:
             case TOKEN_SORTEDMULTI_A:
-                ret = execute_processor(&state, process_multi_a_sortedmulti_a_node, st);
+                ret = execute_processor(&state,
+                                        process_multi_a_sortedmulti_a_node, st);
                 break;
             case TOKEN_A:
-                ret = execute_processor(&state, process_generic_node, commands_a);
+                ret =
+                    execute_processor(&state, process_generic_node, commands_a);
                 break;
             case TOKEN_S:
-                ret = execute_processor(&state, process_generic_node, commands_s);
+                ret =
+                    execute_processor(&state, process_generic_node, commands_s);
                 break;
             case TOKEN_C:
-                ret = execute_processor(&state, process_generic_node, commands_c);
+                ret =
+                    execute_processor(&state, process_generic_node, commands_c);
                 break;
             case TOKEN_T:
-                ret = execute_processor(&state, process_generic_node, commands_t);
+                ret =
+                    execute_processor(&state, process_generic_node, commands_t);
                 break;
             case TOKEN_D:
-                ret = execute_processor(&state, process_generic_node, commands_d);
+                ret =
+                    execute_processor(&state, process_generic_node, commands_d);
                 break;
             case TOKEN_V:
-                ret = execute_processor(&state, process_generic_node, commands_v);
+                ret =
+                    execute_processor(&state, process_generic_node, commands_v);
                 break;
             case TOKEN_J:
-                ret = execute_processor(&state, process_generic_node, commands_j);
+                ret =
+                    execute_processor(&state, process_generic_node, commands_j);
                 break;
             case TOKEN_N:
-                ret = execute_processor(&state, process_generic_node, commands_n);
+                ret =
+                    execute_processor(&state, process_generic_node, commands_n);
                 break;
             case TOKEN_L:
-                ret = execute_processor(&state, process_generic_node, commands_l);
+                ret =
+                    execute_processor(&state, process_generic_node, commands_l);
                 break;
             case TOKEN_U:
-                ret = execute_processor(&state, process_generic_node, commands_u);
+                ret =
+                    execute_processor(&state, process_generic_node, commands_u);
                 break;
             case TOKEN_TR:
             case TOKEN_SH:
@@ -1447,38 +1449,42 @@ __attribute__((noinline)) int get_wallet_internal_script_hash(
 
 // For a standard descriptor template, return the corresponding BIP44 purpose
 // Otherwise, returns -1.
-static int get_bip44_purpose(const policy_node_t *descriptor_template) {
-    const policy_node_keyexpr_t *kp = NULL;
+static int get_bip44_purpose(const policy_node_t* descriptor_template) {
+    const policy_node_keyexpr_t* kp = NULL;
     int purpose = -1;
     switch (descriptor_template->type) {
         case TOKEN_PKH:
-            kp =
-                r_policy_node_keyexpr(&((const policy_node_with_key_t *) descriptor_template)->key);
+            kp = r_policy_node_keyexpr(
+                &((const policy_node_with_key_t*)descriptor_template)->key);
             purpose = 44;  // legacy
             break;
         case TOKEN_WPKH:
-            kp =
-                r_policy_node_keyexpr(&((const policy_node_with_key_t *) descriptor_template)->key);
+            kp = r_policy_node_keyexpr(
+                &((const policy_node_with_key_t*)descriptor_template)->key);
             purpose = 84;  // native segwit
             break;
         case TOKEN_SH: {
-            const policy_node_t *inner =
-                r_policy_node(&((const policy_node_with_script_t *) descriptor_template)->script);
+            const policy_node_t* inner = r_policy_node(
+                &((const policy_node_with_script_t*)descriptor_template)
+                     ->script);
             if (inner->type != TOKEN_WPKH) {
                 return -1;
             }
 
-            kp = r_policy_node_keyexpr(&((const policy_node_with_key_t *) inner)->key);
+            kp = r_policy_node_keyexpr(
+                &((const policy_node_with_key_t*)inner)->key);
             purpose = 49;  // nested segwit
             break;
         }
         case TOKEN_TR: {
-            const policy_node_tr_t *tr = (const policy_node_tr_t *) descriptor_template;
+            const policy_node_tr_t* tr =
+                (const policy_node_tr_t*)descriptor_template;
             if (!isnull_policy_node_tree(&tr->tree)) {
                 return -1;
             }
 
-            kp = r_policy_node_keyexpr(&((const policy_node_tr_t *) descriptor_template)->key);
+            kp = r_policy_node_keyexpr(
+                &((const policy_node_tr_t*)descriptor_template)->key);
             purpose = 86;  // standard single-key P2TR
             break;
         }
@@ -1498,9 +1504,10 @@ static int get_bip44_purpose(const policy_node_t *descriptor_template) {
     return purpose;
 }
 
-bool is_wallet_policy_standard(dispatcher_context_t *dispatcher_context,
-                               const policy_map_wallet_header_t *wallet_policy_header,
-                               const policy_node_t *descriptor_template) {
+bool is_wallet_policy_standard(
+    dispatcher_context_t* dispatcher_context,
+    const policy_map_wallet_header_t* wallet_policy_header,
+    const policy_node_t* descriptor_template) {
     // Based on the address type, we set the expected bip44 purpose
     int bip44_purpose = get_bip44_purpose(descriptor_template);
     if (bip44_purpose < 0) {
@@ -1517,12 +1524,11 @@ bool is_wallet_policy_standard(dispatcher_context_t *dispatcher_context,
     uint32_t master_key_fingerprint = crypto_get_master_key_fingerprint();
 
     uint8_t key_info_str[MAX_POLICY_KEY_INFO_LEN];
-    int key_info_len = call_get_merkle_leaf_element(dispatcher_context,
-                                                    wallet_policy_header->keys_info_merkle_root,
-                                                    wallet_policy_header->n_keys,
-                                                    0,  // only one key
-                                                    key_info_str,
-                                                    sizeof(key_info_str));
+    int key_info_len = call_get_merkle_leaf_element(
+        dispatcher_context, wallet_policy_header->keys_info_merkle_root,
+        wallet_policy_header->n_keys,
+        0,  // only one key
+        key_info_str, sizeof(key_info_str));
     if (key_info_len < 0) {
         return false;
     }
@@ -1531,7 +1537,8 @@ bool is_wallet_policy_standard(dispatcher_context_t *dispatcher_context,
     buffer_t key_info_buffer = buffer_create(key_info_str, key_info_len);
 
     policy_map_key_info_t key_info;
-    if (0 > parse_policy_map_key_info(&key_info_buffer, &key_info, wallet_policy_header->version)) {
+    if (0 > parse_policy_map_key_info(&key_info_buffer, &key_info,
+                                      wallet_policy_header->version)) {
         return false;
     }
 
@@ -1539,7 +1546,8 @@ bool is_wallet_policy_standard(dispatcher_context_t *dispatcher_context,
         return false;
     }
 
-    if (read_u32_be(key_info.master_key_fingerprint, 0) != master_key_fingerprint) {
+    if (read_u32_be(key_info.master_key_fingerprint, 0) !=
+        master_key_fingerprint) {
         return false;
     }
     // generate pubkey and check if it matches
@@ -1552,7 +1560,8 @@ bool is_wallet_policy_standard(dispatcher_context_t *dispatcher_context,
         return false;
     }
 
-    if (memcmp(&key_info.ext_pubkey, &derived_pubkey, sizeof(derived_pubkey)) != 0) {
+    if (memcmp(&key_info.ext_pubkey, &derived_pubkey, sizeof(derived_pubkey)) !=
+        0) {
         return false;
     }
 
@@ -1573,12 +1582,14 @@ bool is_wallet_policy_standard(dispatcher_context_t *dispatcher_context,
     return true;
 }
 
-bool compute_wallet_hmac(const uint8_t wallet_id[static 32], uint8_t wallet_hmac[static 32]) {
+bool compute_wallet_hmac(const uint8_t wallet_id[static 32],
+                         uint8_t wallet_hmac[static 32]) {
     uint8_t key[32];
 
     bool result = false;
 
-    if (!crypto_derive_symmetric_key(WALLET_SLIP0021_LABEL, WALLET_SLIP0021_LABEL_LEN, key)) {
+    if (!crypto_derive_symmetric_key(WALLET_SLIP0021_LABEL,
+                                     WALLET_SLIP0021_LABEL_LEN, key)) {
         goto end;
     }
 
@@ -1592,13 +1603,15 @@ end:
     return result;
 }
 
-bool check_wallet_hmac(const uint8_t wallet_id[static 32], const uint8_t wallet_hmac[static 32]) {
+bool check_wallet_hmac(const uint8_t wallet_id[static 32],
+                       const uint8_t wallet_hmac[static 32]) {
     uint8_t key[32];
     uint8_t correct_hmac[32];
 
     bool result = false;
 
-    if (!crypto_derive_symmetric_key(WALLET_SLIP0021_LABEL, WALLET_SLIP0021_LABEL_LEN, key)) {
+    if (!crypto_derive_symmetric_key(WALLET_SLIP0021_LABEL,
+                                     WALLET_SLIP0021_LABEL_LEN, key)) {
         goto end;
     }
 
@@ -1606,7 +1619,7 @@ bool check_wallet_hmac(const uint8_t wallet_id[static 32], const uint8_t wallet_
 
     // It is important to use a constant-time function to compare the hmac,
     // to avoid timing-attack that could be exploited to extract it.
-    result = os_secure_memcmp((void *) wallet_hmac, (void *) correct_hmac, 32) == 0;
+    result = os_secure_memcmp((void*)wallet_hmac, (void*)correct_hmac, 32) == 0;
 
 end:
     explicit_bzero(key, sizeof(key));
@@ -1619,41 +1632,40 @@ end:
 // make sure that the compiler gives an error if any PolicyNodeType is missed
 #pragma GCC diagnostic error "-Wswitch-enum"
 
-static int get_keyexpr_by_index_in_tree(const policy_node_tree_t *tree,
+static int get_keyexpr_by_index_in_tree(const policy_node_tree_t* tree,
                                         unsigned int i,
-                                        const policy_node_t **out_tapleaf_ptr,
-                                        policy_node_keyexpr_t **out_keyexpr) {
+                                        const policy_node_t** out_tapleaf_ptr,
+                                        policy_node_keyexpr_t** out_keyexpr) {
     if (tree->is_leaf) {
-        int ret = get_keyexpr_by_index(r_policy_node(&tree->script), i, NULL, out_keyexpr);
-        if (ret >= 0 && out_tapleaf_ptr != NULL && i < (unsigned) ret) {
+        int ret = get_keyexpr_by_index(r_policy_node(&tree->script), i, NULL,
+                                       out_keyexpr);
+        if (ret >= 0 && out_tapleaf_ptr != NULL && i < (unsigned)ret) {
             *out_tapleaf_ptr = r_policy_node(&tree->script);
         }
         return ret;
     } else {
-        int ret1 = get_keyexpr_by_index_in_tree(r_policy_node_tree(&tree->left_tree),
-                                                i,
-                                                out_tapleaf_ptr,
-                                                out_keyexpr);
+        int ret1 =
+            get_keyexpr_by_index_in_tree(r_policy_node_tree(&tree->left_tree),
+                                         i, out_tapleaf_ptr, out_keyexpr);
         if (ret1 < 0) return -1;
 
-        bool found = i < (unsigned int) ret1;
+        bool found = i < (unsigned int)ret1;
 
-        int ret2 = get_keyexpr_by_index_in_tree(r_policy_node_tree(&tree->right_tree),
-                                                found ? 0 : i - ret1,
-                                                found ? NULL : out_tapleaf_ptr,
-                                                found ? NULL : out_keyexpr);
+        int ret2 = get_keyexpr_by_index_in_tree(
+            r_policy_node_tree(&tree->right_tree), found ? 0 : i - ret1,
+            found ? NULL : out_tapleaf_ptr, found ? NULL : out_keyexpr);
         if (ret2 < 0) return -1;
 
         return ret1 + ret2;
     }
 }
 
-int get_keyexpr_by_index(const policy_node_t *policy,
-                         unsigned int i,
-                         const policy_node_t **out_tapleaf_ptr,
-                         policy_node_keyexpr_t **out_keyexpr) {
-    // make sure that out_keyexpr is a valid pointer, if the output is not needed
-    policy_node_keyexpr_t *tmp;
+int get_keyexpr_by_index(const policy_node_t* policy, unsigned int i,
+                         const policy_node_t** out_tapleaf_ptr,
+                         policy_node_keyexpr_t** out_keyexpr) {
+    // make sure that out_keyexpr is a valid pointer, if the output is not
+    // needed
+    policy_node_keyexpr_t* tmp;
     if (out_keyexpr == NULL) {
         out_keyexpr = &tmp;
     }
@@ -1676,23 +1688,23 @@ int get_keyexpr_by_index(const policy_node_t *policy,
         case TOKEN_PKH:
         case TOKEN_WPKH: {
             if (i == 0) {
-                policy_node_with_key_t *wpkh = (policy_node_with_key_t *) policy;
+                policy_node_with_key_t* wpkh = (policy_node_with_key_t*)policy;
                 *out_keyexpr = r_policy_node_keyexpr(&wpkh->key);
             }
             return 1;
         }
         case TOKEN_TR: {
-            policy_node_tr_t *tr = (policy_node_tr_t *) policy;
+            policy_node_tr_t* tr = (policy_node_tr_t*)policy;
             if (i == 0) {
                 *out_keyexpr = r_policy_node_keyexpr(&tr->key);
             }
             if (!isnull_policy_node_tree(&tr->tree)) {
                 int ret_tree = get_keyexpr_by_index_in_tree(
-                    r_policy_node_tree(&tr->tree),
-                    i == 0 ? 0 : i - 1,
+                    r_policy_node_tree(&tr->tree), i == 0 ? 0 : i - 1,
                     i == 0 ? NULL : out_tapleaf_ptr,
-                    i == 0 ? NULL : out_keyexpr);  // if i == 0, we already found it; so we
-                                                   // recur with out_keyexpr set to NULL
+                    i == 0 ? NULL : out_keyexpr);  // if i == 0, we already
+                                                   // found it; so we recur with
+                                                   // out_keyexpr set to NULL
 
                 if (ret_tree < 0) {
                     return -1;
@@ -1708,10 +1720,12 @@ int get_keyexpr_by_index(const policy_node_t *policy,
         case TOKEN_MULTI_A:
         case TOKEN_SORTEDMULTI:
         case TOKEN_SORTEDMULTI_A: {
-            const policy_node_multisig_t *node = (const policy_node_multisig_t *) policy;
+            const policy_node_multisig_t* node =
+                (const policy_node_multisig_t*)policy;
 
-            if (i < (unsigned int) node->n) {
-                policy_node_keyexpr_t *key_expressions = r_policy_node_keyexpr(&node->keys);
+            if (i < (unsigned int)node->n) {
+                policy_node_keyexpr_t* key_expressions =
+                    r_policy_node_keyexpr(&node->keys);
                 *out_keyexpr = &key_expressions[i];
             }
 
@@ -1732,10 +1746,9 @@ int get_keyexpr_by_index(const policy_node_t *policy,
         case TOKEN_L:
         case TOKEN_U: {
             return get_keyexpr_by_index(
-                r_policy_node(&((const policy_node_with_script_t *) policy)->script),
-                i,
-                out_tapleaf_ptr,
-                out_keyexpr);
+                r_policy_node(
+                    &((const policy_node_with_script_t*)policy)->script),
+                i, out_tapleaf_ptr, out_keyexpr);
         }
 
         // nodes with exactly two child scripts
@@ -1746,18 +1759,16 @@ int get_keyexpr_by_index(const policy_node_t *policy,
         case TOKEN_OR_C:
         case TOKEN_OR_D:
         case TOKEN_OR_I: {
-            const policy_node_with_script2_t *node = (const policy_node_with_script2_t *) policy;
-            int ret1 = get_keyexpr_by_index(r_policy_node(&node->scripts[0]),
-                                            i,
-                                            out_tapleaf_ptr,
-                                            out_keyexpr);
+            const policy_node_with_script2_t* node =
+                (const policy_node_with_script2_t*)policy;
+            int ret1 = get_keyexpr_by_index(r_policy_node(&node->scripts[0]), i,
+                                            out_tapleaf_ptr, out_keyexpr);
             if (ret1 < 0) return -1;
 
-            bool found = i < (unsigned int) ret1;
-            int ret2 = get_keyexpr_by_index(r_policy_node(&node->scripts[1]),
-                                            found ? 0 : i - ret1,
-                                            found ? NULL : out_tapleaf_ptr,
-                                            found ? NULL : out_keyexpr);
+            bool found = i < (unsigned int)ret1;
+            int ret2 = get_keyexpr_by_index(
+                r_policy_node(&node->scripts[1]), found ? 0 : i - ret1,
+                found ? NULL : out_tapleaf_ptr, found ? NULL : out_keyexpr);
             if (ret2 < 0) return -1;
 
             return ret1 + ret2;
@@ -1765,44 +1776,43 @@ int get_keyexpr_by_index(const policy_node_t *policy,
 
         // nodes with exactly three child scripts
         case TOKEN_ANDOR: {
-            const policy_node_with_script3_t *node = (const policy_node_with_script3_t *) policy;
-            int ret1 = get_keyexpr_by_index(r_policy_node(&node->scripts[0]),
-                                            i,
-                                            out_tapleaf_ptr,
-                                            out_keyexpr);
+            const policy_node_with_script3_t* node =
+                (const policy_node_with_script3_t*)policy;
+            int ret1 = get_keyexpr_by_index(r_policy_node(&node->scripts[0]), i,
+                                            out_tapleaf_ptr, out_keyexpr);
             if (ret1 < 0) return -1;
 
-            bool found = i < (unsigned int) ret1;
-            int ret2 = get_keyexpr_by_index(r_policy_node(&node->scripts[1]),
-                                            found ? 0 : i - ret1,
-                                            found ? NULL : out_tapleaf_ptr,
-                                            found ? NULL : out_keyexpr);
+            bool found = i < (unsigned int)ret1;
+            int ret2 = get_keyexpr_by_index(
+                r_policy_node(&node->scripts[1]), found ? 0 : i - ret1,
+                found ? NULL : out_tapleaf_ptr, found ? NULL : out_keyexpr);
             if (ret2 < 0) return -1;
 
-            found = i < (unsigned int) (ret1 + ret2);
-            int ret3 = get_keyexpr_by_index(r_policy_node(&node->scripts[2]),
-                                            found ? 0 : i - ret1 - ret2,
-                                            found ? NULL : out_tapleaf_ptr,
-                                            found ? NULL : out_keyexpr);
+            found = i < (unsigned int)(ret1 + ret2);
+            int ret3 = get_keyexpr_by_index(
+                r_policy_node(&node->scripts[2]), found ? 0 : i - ret1 - ret2,
+                found ? NULL : out_tapleaf_ptr, found ? NULL : out_keyexpr);
             if (ret3 < 0) return -1;
             return ret1 + ret2 + ret3;
         }
 
         // nodes with multiple child scripts
         case TOKEN_THRESH: {
-            const policy_node_thresh_t *node = (const policy_node_thresh_t *) policy;
+            const policy_node_thresh_t* node =
+                (const policy_node_thresh_t*)policy;
             bool found;
             int ret = 0;
-            policy_node_scriptlist_t *cur_child = r_policy_node_scriptlist(&node->scriptlist);
+            policy_node_scriptlist_t* cur_child =
+                r_policy_node_scriptlist(&node->scriptlist);
             for (int script_idx = 0; script_idx < node->n; script_idx++) {
-                LEDGER_ASSERT(cur_child != NULL,
-                              "The script should always have exactly n child scripts");
+                LEDGER_ASSERT(
+                    cur_child != NULL,
+                    "The script should always have exactly n child scripts");
 
-                found = i < (unsigned int) ret;
-                int ret_partial = get_keyexpr_by_index(r_policy_node(&cur_child->script),
-                                                       found ? 0 : i - ret,
-                                                       found ? NULL : out_tapleaf_ptr,
-                                                       found ? NULL : out_keyexpr);
+                found = i < (unsigned int)ret;
+                int ret_partial = get_keyexpr_by_index(
+                    r_policy_node(&cur_child->script), found ? 0 : i - ret,
+                    found ? NULL : out_tapleaf_ptr, found ? NULL : out_keyexpr);
                 if (ret_partial < 0) return -1;
 
                 ret += ret_partial;
@@ -1823,9 +1833,9 @@ int get_keyexpr_by_index(const policy_node_t *policy,
     return -1;
 }
 
-int count_distinct_keys_info(const policy_node_t *policy) {
+int count_distinct_keys_info(const policy_node_t* policy) {
     int ret = -1;
-    policy_node_keyexpr_t *key_expression_ptr;
+    policy_node_keyexpr_t* key_expression_ptr;
     int n_key_expressions = get_keyexpr_by_index(policy, 0, NULL, NULL);
     if (n_key_expressions < 0) {
         return -1;
@@ -1845,20 +1855,16 @@ int count_distinct_keys_info(const policy_node_t *policy) {
     return ret;
 }
 
-// Utility function to extract and decode the i-th xpub from the keys information vector
-static int get_pubkey_from_merkle_tree(dispatcher_context_t *dispatcher_context,
-                                       int wallet_version,
-                                       const uint8_t keys_merkle_root[static 32],
-                                       uint32_t n_keys,
-                                       uint32_t index,
-                                       serialized_extended_pubkey_t *out) {
+// Utility function to extract and decode the i-th xpub from the keys
+// information vector
+static int get_pubkey_from_merkle_tree(
+    dispatcher_context_t* dispatcher_context, int wallet_version,
+    const uint8_t keys_merkle_root[static 32], uint32_t n_keys, uint32_t index,
+    serialized_extended_pubkey_t* out) {
     char key_info_str[MAX_POLICY_KEY_INFO_LEN];
-    int key_info_len = call_get_merkle_leaf_element(dispatcher_context,
-                                                    keys_merkle_root,
-                                                    n_keys,
-                                                    index,
-                                                    (uint8_t *) key_info_str,
-                                                    sizeof(key_info_str));
+    int key_info_len = call_get_merkle_leaf_element(
+        dispatcher_context, keys_merkle_root, n_keys, index,
+        (uint8_t*)key_info_str, sizeof(key_info_str));
     if (key_info_len == -1) {
         return WITH_ERROR(-1, "Failed to retrieve key info");
     }
@@ -1867,19 +1873,23 @@ static int get_pubkey_from_merkle_tree(dispatcher_context_t *dispatcher_context,
     buffer_t key_info_buffer = buffer_create(key_info_str, key_info_len);
 
     policy_map_key_info_t key_info;
-    if (parse_policy_map_key_info(&key_info_buffer, &key_info, wallet_version) == -1) {
+    if (parse_policy_map_key_info(&key_info_buffer, &key_info,
+                                  wallet_version) == -1) {
         return WITH_ERROR(-1, "Failed to parse key information");
     }
     *out = key_info.ext_pubkey;
     return 0;
 }
 
-static int is_miniscript_sane(const policy_node_t *script, MiniscriptContext context) {
-    if (context != MINISCRIPT_CONTEXT_P2WSH && context != MINISCRIPT_CONTEXT_TAPSCRIPT) {
+static int is_miniscript_sane(const policy_node_t* script,
+                              MiniscriptContext context) {
+    if (context != MINISCRIPT_CONTEXT_P2WSH &&
+        context != MINISCRIPT_CONTEXT_TAPSCRIPT) {
         return WITH_ERROR(-1, "Unknown miniscript context");
     }
     if (!script->flags.is_miniscript) {
-        return WITH_ERROR(-1, "This function can only be called for miniscript");
+        return WITH_ERROR(-1,
+                          "This function can only be called for miniscript");
     }
 
     // Top level node in miniscript must be type B
@@ -1895,7 +1905,8 @@ static int is_miniscript_sane(const policy_node_t *script, MiniscriptContext con
 
     // Check that non-malleability can be guaranteed
     if (!ext_info.m) {
-        return WITH_ERROR(-1, "Miniscript cannot always be satisfied non-malleably");
+        return WITH_ERROR(
+            -1, "Miniscript cannot always be satisfied non-malleably");
     }
 
     // Check that a signature is always required to satisfy the miniscript
@@ -1908,14 +1919,16 @@ static int is_miniscript_sane(const policy_node_t *script, MiniscriptContext con
         return WITH_ERROR(-1, "Miniscript with time-lock mix");
     }
 
-    // Note: the following limits could be relaxed for taproot miniscript; however, that
-    // would mean that tapscripts could run into the maximum stack size limits during
-    // execution, which we didn't implement explicit checks against.
-    // Therefore, we rather apply the conservative limit for segwit even to tapscripts.
-    // We don't expect these limits to be reached in real-world policies.
+    // Note: the following limits could be relaxed for taproot miniscript;
+    // however, that would mean that tapscripts could run into the maximum stack
+    // size limits during execution, which we didn't implement explicit checks
+    // against. Therefore, we rather apply the conservative limit for segwit
+    // even to tapscripts. We don't expect these limits to be reached in
+    // real-world policies.
 
     // Check the maximum stack size to satisfy the policy
-    if (ext_info.ss.sat == -1 || (uint32_t) ext_info.ss.sat > MAX_STANDARD_P2WSH_STACK_ITEMS) {
+    if (ext_info.ss.sat == -1 ||
+        (uint32_t)ext_info.ss.sat > MAX_STANDARD_P2WSH_STACK_ITEMS) {
         return WITH_ERROR(-1, "Miniscript exceeds maximum standard stack size");
     }
 
@@ -1925,7 +1938,8 @@ static int is_miniscript_sane(const policy_node_t *script, MiniscriptContext con
     }
 
     // Check ops limit
-    if ((uint32_t) ext_info.ops.count + (uint32_t) ext_info.ops.sat > MAX_OPS_PER_SCRIPT) {
+    if ((uint32_t)ext_info.ops.count + (uint32_t)ext_info.ops.sat >
+        MAX_OPS_PER_SCRIPT) {
         return WITH_ERROR(-1, "Miniscript exceeds maximum ops");
     }
 
@@ -1936,20 +1950,22 @@ static int is_miniscript_sane(const policy_node_t *script, MiniscriptContext con
     return 0;
 }
 
-static int is_taptree_miniscript_sane(const policy_node_tree_t *taptree) {
-    // Recurse until leaves are found, then check sanity if they contain miniscript.
-    // No check is performed on leaves not containing miniscript.
+static int is_taptree_miniscript_sane(const policy_node_tree_t* taptree) {
+    // Recurse until leaves are found, then check sanity if they contain
+    // miniscript. No check is performed on leaves not containing miniscript.
     if (taptree->is_leaf) {
-        const policy_node_t *script = r_policy_node(&taptree->script);
+        const policy_node_t* script = r_policy_node(&taptree->script);
         if (script->flags.is_miniscript &&  // only check for miniscript leaves
             0 > is_miniscript_sane(script, MINISCRIPT_CONTEXT_TAPSCRIPT)) {
             return -1;
         }
     } else {
-        if (0 > is_taptree_miniscript_sane(r_policy_node_tree(&taptree->left_tree))) {
+        if (0 > is_taptree_miniscript_sane(
+                    r_policy_node_tree(&taptree->left_tree))) {
             return -1;
         }
-        if (0 > is_taptree_miniscript_sane(r_policy_node_tree(&taptree->right_tree))) {
+        if (0 > is_taptree_miniscript_sane(
+                    r_policy_node_tree(&taptree->right_tree))) {
             return -1;
         }
     }
@@ -1964,12 +1980,13 @@ static int is_taptree_miniscript_sane(const policy_node_tree_t *taptree) {
 //     return (num1 > num2) - (num1 < num2);
 // }
 
-static bool are_key_placeholders_identical(const policy_node_keyexpr_t *kp1,
-                                           const policy_node_keyexpr_t *kp2) {
+static bool are_key_placeholders_identical(const policy_node_keyexpr_t* kp1,
+                                           const policy_node_keyexpr_t* kp2) {
     if (kp1->type != kp2->type) {
         return false;
     }
-    if (kp1->type == KEY_EXPRESSION_NORMAL && kp2->type == KEY_EXPRESSION_NORMAL) {
+    if (kp1->type == KEY_EXPRESSION_NORMAL &&
+        kp2->type == KEY_EXPRESSION_NORMAL) {
         return kp1->k.key_index == kp2->k.key_index;
     } else {
         LEDGER_ASSERT(false, "Unknown key expression type");
@@ -1978,14 +1995,12 @@ static bool are_key_placeholders_identical(const policy_node_keyexpr_t *kp1,
     LEDGER_ASSERT(false, "Unreachable code");
 }
 
-int is_policy_sane(dispatcher_context_t *dispatcher_context,
-                   const policy_node_t *policy,
-                   int wallet_version,
-                   const uint8_t keys_merkle_root[static 32],
-                   uint32_t n_keys) {
+int is_policy_sane(dispatcher_context_t* dispatcher_context,
+                   const policy_node_t* policy, int wallet_version,
+                   const uint8_t keys_merkle_root[static 32], uint32_t n_keys) {
     if (policy->type == TOKEN_WSH) {
-        const policy_node_t *inner =
-            r_policy_node(&((const policy_node_with_script_t *) policy)->script);
+        const policy_node_t* inner =
+            r_policy_node(&((const policy_node_with_script_t*)policy)->script);
         if (inner->flags.is_miniscript) {
             if (0 > is_miniscript_sane(inner, MINISCRIPT_CONTEXT_P2WSH)) {
                 return -1;
@@ -1993,41 +2008,36 @@ int is_policy_sane(dispatcher_context_t *dispatcher_context,
         }
     } else if (policy->type == TOKEN_TR) {
         // if there is a taptree, we check the sanity of every miniscript leaf
-        const policy_node_tr_t *tr = (const policy_node_tr_t *) policy;
-        const policy_node_tree_t *taptree = r_policy_node_tree(&tr->tree);
+        const policy_node_tr_t* tr = (const policy_node_tr_t*)policy;
+        const policy_node_tree_t* taptree = r_policy_node_tree(&tr->tree);
         if (taptree != NULL && 0 > is_taptree_miniscript_sane(taptree)) {
             return -1;
         }
     }
 
     // check that all the xpubs are different
-    for (unsigned int i = 0; i < n_keys - 1; i++) {  // no point in running this for the last key
+    for (unsigned int i = 0; i < n_keys - 1;
+         i++) {  // no point in running this for the last key
         serialized_extended_pubkey_t pubkey_i;
-        if (0 > get_pubkey_from_merkle_tree(dispatcher_context,
-                                            wallet_version,
-                                            keys_merkle_root,
-                                            n_keys,
-                                            i,
+        if (0 > get_pubkey_from_merkle_tree(dispatcher_context, wallet_version,
+                                            keys_merkle_root, n_keys, i,
                                             &pubkey_i)) {
             return -1;
         }
 
         for (unsigned int j = i + 1; j < n_keys; j++) {
             serialized_extended_pubkey_t pubkey_j;
-            if (0 > get_pubkey_from_merkle_tree(dispatcher_context,
-                                                wallet_version,
-                                                keys_merkle_root,
-                                                n_keys,
-                                                j,
-                                                &pubkey_j)) {
+            if (0 > get_pubkey_from_merkle_tree(
+                        dispatcher_context, wallet_version, keys_merkle_root,
+                        n_keys, j, &pubkey_j)) {
                 return -1;
             }
 
             // We reject if any two xpubs have the same pubkey
-            // Conservatively, we only compare the compressed pubkey, rather than the whole xpub:
-            // there is no good reason for allowing two different xpubs with the same pubkey.
-            if (memcmp(pubkey_i.compressed_pubkey,
-                       pubkey_j.compressed_pubkey,
+            // Conservatively, we only compare the compressed pubkey, rather
+            // than the whole xpub: there is no good reason for allowing two
+            // different xpubs with the same pubkey.
+            if (memcmp(pubkey_i.compressed_pubkey, pubkey_j.compressed_pubkey,
                        sizeof(pubkey_i.compressed_pubkey)) == 0) {
                 // duplicated pubkey
                 return WITH_ERROR(-1, "Repeated pubkey in wallet policy");
@@ -2035,52 +2045,62 @@ int is_policy_sane(dispatcher_context_t *dispatcher_context,
         }
     }
 
-    // check that all the key expressions for the same xpub do indeed have different
-    // derivations
+    // check that all the key expressions for the same xpub do indeed have
+    // different derivations
     int n_key_expressions = get_keyexpr_by_index(policy, 0, NULL, NULL);
     if (n_key_expressions < 0) {
-        return WITH_ERROR(-1, "Unexpected error while counting key expressions");
+        return WITH_ERROR(-1,
+                          "Unexpected error while counting key expressions");
     }
 
-    // for each MuSig key expression, checks that the key indices are all distinct
+    // for each MuSig key expression, checks that the key indices are all
+    // distinct
     for (int i = 0; i < n_key_expressions; i++) {
-        policy_node_keyexpr_t *kp_i;
+        policy_node_keyexpr_t* kp_i;
         if (0 > get_keyexpr_by_index(policy, i, NULL, &kp_i)) {
-            return WITH_ERROR(-1, "Unexpected error retrieving key expressions from the policy");
+            return WITH_ERROR(
+                -1,
+                "Unexpected error retrieving key expressions from the policy");
         }
     }
 
-    // The following loop is computationally very inefficient, but more efficient solutions likely
-    // require a substantial amount of RAM and/or more complex code.
-    // As it's unlikely that the number of keys in a wallet policy will be large enough for this to,
-    // matther, we rather keep the code as simple as possible.
+    // The following loop is computationally very inefficient, but more
+    // efficient solutions likely require a substantial amount of RAM and/or
+    // more complex code. As it's unlikely that the number of keys in a wallet
+    // policy will be large enough for this to, matther, we rather keep the code
+    // as simple as possible.
     for (int i = 0; i < n_key_expressions - 1;
          i++) {  // no point in running this for the last key expression
-        policy_node_keyexpr_t *kp_i;
+        policy_node_keyexpr_t* kp_i;
         if (0 > get_keyexpr_by_index(policy, i, NULL, &kp_i)) {
-            return WITH_ERROR(-1, "Unexpected error retrieving key expressions from the policy");
+            return WITH_ERROR(
+                -1,
+                "Unexpected error retrieving key expressions from the policy");
         }
         for (int j = i + 1; j < n_key_expressions; j++) {
-            policy_node_keyexpr_t *kp_j;
+            policy_node_keyexpr_t* kp_j;
             if (0 > get_keyexpr_by_index(policy, j, NULL, &kp_j)) {
                 return WITH_ERROR(-1,
-                                  "Unexpected error retrieving key expressions from the policy");
+                                  "Unexpected error retrieving key expressions "
+                                  "from the policy");
             }
 
-            // There is nothing to check for two placeholders that are not identical.
-            // If they are identical, we make sure that the derivations are disjoint, as per
-            // BIP-388. Note that this means that we do not enforce that _all_ the keys in different
-            // musig placeholders are disjoint, as long as they are not exactly the same set of
-            // keys. Similarly, a key used in a normal placeholder could also be part of the set of
-            // keys in a musig placeholder.
+            // There is nothing to check for two placeholders that are not
+            // identical. If they are identical, we make sure that the
+            // derivations are disjoint, as per BIP-388. Note that this means
+            // that we do not enforce that _all_ the keys in different musig
+            // placeholders are disjoint, as long as they are not exactly the
+            // same set of keys. Similarly, a key used in a normal placeholder
+            // could also be part of the set of keys in a musig placeholder.
             if (are_key_placeholders_identical(kp_i, kp_j)) {
                 if (kp_i->k.key_index == kp_j->k.key_index) {
-                    if (kp_i->num_first == kp_j->num_first || kp_i->num_first == kp_j->num_second ||
+                    if (kp_i->num_first == kp_j->num_first ||
+                        kp_i->num_first == kp_j->num_second ||
                         kp_i->num_second == kp_j->num_first ||
                         kp_i->num_second == kp_j->num_second) {
-                        return WITH_ERROR(
-                            -1,
-                            "Key expressions with repeated derivations in miniscript");
+                        return WITH_ERROR(-1,
+                                          "Key expressions with repeated "
+                                          "derivations in miniscript");
                     }
                 }
             }
@@ -2090,14 +2110,15 @@ int is_policy_sane(dispatcher_context_t *dispatcher_context,
 }
 
 BBN_FingerPrintType get_fingerprint(const uint8_t fingerprint[static 4]) {
-    // BBN_LEAFHASH_DISPLAY_FP  fingerprint for leafhash, will be shown in the UI
-    // BBN_LEAFHASH_CHECK_FP    fingerprint for leafhash. check only
+    // BBN_LEAFHASH_DISPLAY_FP  fingerprint for leafhash, will be shown in the
+    // UI BBN_LEAFHASH_CHECK_FP    fingerprint for leafhash. check only
     // FP_FINALITY_PUB          fingerprint for finality pubkey
     // FP_BIP322_MESSAGE        fingerprint for BIP322 message
     // FP_BIP322_TAPPUB         fingerprint for BIP322 taproot pubkey
     // FP_OTHER                 not special fingerprint
     // Coinspect:
-    // FP_BIP322_HASH           fingerprint for BIP322 message first 64 bytes hash
+    // FP_BIP322_HASH           fingerprint for BIP322 message first 64 bytes
+    // hash
     if (!memcmp(fingerprint, BBN_NULL_FP, 4)) {
         return FP_NULL;
     } else if (!memcmp(fingerprint, BBN_LEAFHASH_DISPLAY_FP, 4)) {
@@ -2117,7 +2138,7 @@ BBN_FingerPrintType get_fingerprint(const uint8_t fingerprint[static 4]) {
     }
 }
 
-int get_action_type(const char *str) {
+int get_action_type(const char* str) {
     if (str == NULL) {
         return BBN_POLICY_UNKNOWN;
     }
@@ -2141,7 +2162,7 @@ int get_action_type(const char *str) {
     return BBN_POLICY_UNKNOWN;
 }
 
-static bool validate_multi_a(char *p, char **end_ptr) {
+static bool validate_multi_a(char* p, char** end_ptr) {
     p += 2;
     for (;;) {
         if (*p == '\0') return false;
@@ -2155,50 +2176,52 @@ static bool validate_multi_a(char *p, char **end_ptr) {
         }
         if (*p != '@') return false;
         p++;
-        if (!isdigit((unsigned char) *p)) return false;
-        while (isdigit((unsigned char) *p)) p++;
+        if (!isdigit((unsigned char)*p)) return false;
+        while (isdigit((unsigned char)*p)) p++;
         if (p[0] != '/' || p[1] != '*' || p[2] != '*') return false;
         p += 3;
     }
 }
 
-static bool validate_older(const char *p) {
+static bool validate_older(const char* p) {
     for (;;) {
         if (*p == '\0') return false;
         if (*p == ')') return true;
-        if (!isdigit((unsigned char) *p)) return false;
+        if (!isdigit((unsigned char)*p)) return false;
         p++;
     }
 }
 
-int check_prefix(const char *descriptor, bbn_policy_type_t type) {
+int check_prefix(const char* descriptor, bbn_policy_type_t type) {
     switch (type) {
         case BBN_POLICY_SLASHING:
-            if (memcmp(descriptor, BBN_DESCRIPTOR_SLASHING, strlen(BBN_DESCRIPTOR_SLASHING)) == 0)
+            if (memcmp(descriptor, BBN_DESCRIPTOR_SLASHING,
+                       strlen(BBN_DESCRIPTOR_SLASHING)) == 0)
                 return BBN_POLICY_SLASHING;
             break;
         case BBN_POLICY_SLASHING_UNBONDING:
-            if (memcmp(descriptor,
-                       BBN_DESCRIPTOR_SLASHING_UNBONDING,
+            if (memcmp(descriptor, BBN_DESCRIPTOR_SLASHING_UNBONDING,
                        strlen(BBN_DESCRIPTOR_SLASHING_UNBONDING)) == 0)
                 return BBN_POLICY_SLASHING_UNBONDING;
             break;
         case BBN_POLICY_STAKE_TRANSFER:
-            if (memcmp(descriptor,
-                       BBN_DESCRIPTOR_STAKE_TRANSFER,
+            if (memcmp(descriptor, BBN_DESCRIPTOR_STAKE_TRANSFER,
                        strlen(BBN_DESCRIPTOR_STAKE_TRANSFER)) == 0)
                 return BBN_POLICY_STAKE_TRANSFER;
             break;
         case BBN_POLICY_UNBOND:
-            if (memcmp(descriptor, BBN_DESCRIPTOR_UNBOND, strlen(BBN_DESCRIPTOR_UNBOND)) == 0)
+            if (memcmp(descriptor, BBN_DESCRIPTOR_UNBOND,
+                       strlen(BBN_DESCRIPTOR_UNBOND)) == 0)
                 return BBN_POLICY_UNBOND;
             break;
         case BBN_POLICY_WITHDRAW:
-            if (memcmp(descriptor, BBN_DESCRIPTOR_WITHDRAW, strlen(BBN_DESCRIPTOR_WITHDRAW)) == 0)
+            if (memcmp(descriptor, BBN_DESCRIPTOR_WITHDRAW,
+                       strlen(BBN_DESCRIPTOR_WITHDRAW)) == 0)
                 return BBN_POLICY_WITHDRAW;
             break;
         case BBN_POLICY_BIP322:
-            if (memcmp(descriptor, BBN_DESCRIPTOR_BIP322, strlen(BBN_DESCRIPTOR_BIP322)) == 0)
+            if (memcmp(descriptor, BBN_DESCRIPTOR_BIP322,
+                       strlen(BBN_DESCRIPTOR_BIP322)) == 0)
                 return BBN_POLICY_BIP322;
             break;
         case BBN_POLICY_UNKNOWN:
@@ -2209,18 +2232,18 @@ int check_prefix(const char *descriptor, bbn_policy_type_t type) {
     return -1;
 }
 
-static bool validate_no_letters_after_last_paren(const char *s) {
+static bool validate_no_letters_after_last_paren(const char* s) {
     char buffer[BBN_DESCRIPTOR_MAX_LEN + 1] = {0};
     strncpy(buffer, s, sizeof(buffer));
     buffer[sizeof(buffer) - 1] = '\0';
 
-    const char *p = strstr(buffer, ")");
+    const char* p = strstr(buffer, ")");
     if (!p) {
         // BAP-003
         return false;
     }
     for (++p; *p; ++p) {
-        if (isalpha((unsigned char) *p)) {
+        if (isalpha((unsigned char)*p)) {
             PRINTF("validate_no_letters_after_last_paren fail: %s\n", p);
             return false;
         }
@@ -2237,7 +2260,7 @@ static bool validate_no_letters_after_last_paren(const char *s) {
 // check if there is only key wildcard, only number in the older
 // and no other info or characters behind it
 // for BBN_POLICY_WITHDRAW only the older
-bool check_descriptor(const char *s, bbn_policy_type_t type) {
+bool check_descriptor(const char* s, bbn_policy_type_t type) {
     char descriptor[BBN_DESCRIPTOR_MAX_LEN + 1] = {0};
     strncpy(descriptor, s, sizeof(descriptor));
     descriptor[sizeof(descriptor) - 1] = '\0';
@@ -2248,8 +2271,8 @@ bool check_descriptor(const char *s, bbn_policy_type_t type) {
         return false;
     }
 
-    char *str2check;
-    char *lock2check;
+    char* str2check;
+    char* lock2check;
 
     switch (descriptor_type) {
         case BBN_POLICY_SLASHING:
@@ -2257,9 +2280,11 @@ bool check_descriptor(const char *s, bbn_policy_type_t type) {
         case BBN_POLICY_STAKE_TRANSFER:
         case BBN_POLICY_UNBOND:
             str2check = strstr(descriptor, "multi_a(");
-            char *end_of_multi_a;
+            char* end_of_multi_a;
             // get the end address of multi_a
-            if (!validate_multi_a(str2check + strlen("multi_a("), &end_of_multi_a)) return false;
+            if (!validate_multi_a(str2check + strlen("multi_a("),
+                                  &end_of_multi_a))
+                return false;
 
             lock2check = strstr(str2check, "older(");
             if (!lock2check) return false;
@@ -2268,16 +2293,21 @@ bool check_descriptor(const char *s, bbn_policy_type_t type) {
                 return false;
             }
             for (int i = 0; i < 4; i++) {
-                if (*(end_of_multi_a + i) != ')' && *(end_of_multi_a + i) != ',') {
-                    PRINTF("check_descriptor: other between multi and older %c\n",
-                           *(end_of_multi_a + i));
+                if (*(end_of_multi_a + i) != ')' &&
+                    *(end_of_multi_a + i) != ',') {
+                    PRINTF(
+                        "check_descriptor: other between multi and older %c\n",
+                        *(end_of_multi_a + i));
                     return false;
                 }
             }
             if (!validate_older(lock2check + strlen("older("))) return false;
-            if (!validate_no_letters_after_last_paren(lock2check + strlen("older("))) {
-                PRINTF("check_descriptor: letters after last parenthesis in descriptor: %s\n",
-                       descriptor);
+            if (!validate_no_letters_after_last_paren(lock2check +
+                                                      strlen("older("))) {
+                PRINTF(
+                    "check_descriptor: letters after last parenthesis in "
+                    "descriptor: %s\n",
+                    descriptor);
                 return false;
             }
             break;
@@ -2285,9 +2315,12 @@ bool check_descriptor(const char *s, bbn_policy_type_t type) {
             lock2check = strstr(descriptor, "older(");
             if (!lock2check) return false;
             if (!validate_older(lock2check + strlen("older("))) return false;
-            if (!validate_no_letters_after_last_paren(lock2check + strlen("older("))) {
-                PRINTF("check_descriptor: letters after last parenthesis in descriptor: %s\n",
-                       descriptor);
+            if (!validate_no_letters_after_last_paren(lock2check +
+                                                      strlen("older("))) {
+                PRINTF(
+                    "check_descriptor: letters after last parenthesis in "
+                    "descriptor: %s\n",
+                    descriptor);
                 return false;
             }
 

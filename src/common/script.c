@@ -1,12 +1,13 @@
+#include "../common/script.h"
+
+#include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
-#include <limits.h>
 
 #include "../common/bip32.h"
 #include "../common/buffer.h"
 #include "../common/read.h"
-#include "../common/script.h"
 #include "../common/segwit_addr.h"
 
 #ifndef SKIP_FOR_CMOCKA
@@ -29,8 +30,9 @@ size_t get_push_script_size(uint32_t n) {
 }
 
 int get_script_type(const uint8_t script[], size_t script_len) {
-    if (script_len == 25 && script[0] == OP_DUP && script[1] == OP_HASH160 && script[2] == 0x14 &&
-        script[23] == OP_EQUALVERIFY && script[24] == OP_CHECKSIG) {
+    if (script_len == 25 && script[0] == OP_DUP && script[1] == OP_HASH160 &&
+        script[2] == 0x14 && script[23] == OP_EQUALVERIFY &&
+        script[24] == OP_CHECKSIG) {
         return SCRIPT_TYPE_P2PKH;
     }
 
@@ -51,7 +53,8 @@ int get_script_type(const uint8_t script[], size_t script_len) {
         return SCRIPT_TYPE_P2TR;
     }
 
-    // match if it is a potentially valid future segwit scriptPubKey as per BIP-0141
+    // match if it is a potentially valid future segwit scriptPubKey as per
+    // BIP-0141
     if (script_len >= 4 && script_len <= 42 &&
         (script[0] == 0 || (script[0] >= OP_1 && script[0] <= OP_16))) {
         uint8_t push_len = script[1];
@@ -67,15 +70,18 @@ int get_script_type(const uint8_t script[], size_t script_len) {
 #ifndef SKIP_FOR_CMOCKA
 
 // TODO: add unit tests
-int get_script_address(const uint8_t script[], size_t script_len, char *out, size_t out_len) {
+int get_script_address(const uint8_t script[], size_t script_len, char* out,
+                       size_t out_len) {
     int script_type = get_script_type(script, script_len);
     int addr_len;
     switch (script_type) {
         case SCRIPT_TYPE_P2PKH:
         case SCRIPT_TYPE_P2SH: {
             int offset = (script_type == SCRIPT_TYPE_P2PKH) ? 3 : 2;
-            int ver = (script_type == SCRIPT_TYPE_P2PKH) ? COIN_P2PKH_VERSION : COIN_P2SH_VERSION;
-            addr_len = base58_encode_address(script + offset, ver, out, out_len - 1);
+            int ver = (script_type == SCRIPT_TYPE_P2PKH) ? COIN_P2PKH_VERSION
+                                                         : COIN_P2SH_VERSION;
+            addr_len =
+                base58_encode_address(script + offset, ver, out, out_len - 1);
             if (addr_len < 0) {
                 return -1;
             }
@@ -95,8 +101,8 @@ int get_script_address(const uint8_t script[], size_t script_len, char *out, siz
                 return -1;
             }
 
-            int ret =
-                segwit_addr_encode(out, COIN_NATIVE_SEGWIT_PREFIX, version, script + 2, prog_len);
+            int ret = segwit_addr_encode(out, COIN_NATIVE_SEGWIT_PREFIX,
+                                         version, script + 2, prog_len);
 
             if (ret != 1) {
                 return -1;  // should never happen
@@ -116,15 +122,15 @@ int get_script_address(const uint8_t script[], size_t script_len, char *out, siz
 
 #endif
 
-int format_opscript_script(const uint8_t script[],
-                           size_t script_len,
+int format_opscript_script(const uint8_t script[], size_t script_len,
                            char out[static MAX_OPRETURN_OUTPUT_DESC_SIZE]) {
     if (script_len == 0 || script[0] != OP_RETURN) {
         return -1;
     }
 
     if (script_len > 83) {
-        // a script that is more than 83 bytes violates the "max 80 bytes total data" rule
+        // a script that is more than 83 bytes violates the "max 80 bytes total
+        // data" rule
         // (+ 3 bytes of opcodes) and is therefore not standard in Bitcoin Core.
         return -1;
     }
@@ -133,8 +139,9 @@ int format_opscript_script(const uint8_t script[],
     out[MAX_OPRETURN_OUTPUT_DESC_SIZE - 1] = '\0';
     int out_ctr = 10;
 
-    // If the length of the script is 1 (just "OP_RETURN"), then it's not standard per bitcoin-core.
-    // However, signing such outputs is part of BIP-0322, and there's no danger in allowing them.
+    // If the length of the script is 1 (just "OP_RETURN"), then it's not
+    // standard per bitcoin-core. However, signing such outputs is part of
+    // BIP-0322, and there's no danger in allowing them.
 
     if (script_len == 1) {
         out[out_ctr - 1] = '\0';  // remove extra space
@@ -157,7 +164,8 @@ int format_opscript_script(const uint8_t script[],
         if (opcode == OP_0) {
             out[out_ctr++] = '0';
         } else if (opcode >= 1 && opcode <= 75) {
-            // opcodes between 1 and 75 indicate a data push of the corresponding length
+            // opcodes between 1 and 75 indicate a data push of the
+            // corresponding length
             hex_length = opcode;
         } else if (opcode == OP_PUSHDATA1) {
             // the next byte is the length
@@ -166,7 +174,8 @@ int format_opscript_script(const uint8_t script[],
             }
             hex_length = script[offset++];
             if (hex_length <= 75) {
-                return -1;  // non-standard, should have used the minimal push opcode
+                return -1;  // non-standard, should have used the minimal push
+                            // opcode
             }
         } else if (opcode == OP_1NEGATE) {
             out[out_ctr++] = '-';
@@ -190,8 +199,10 @@ int format_opscript_script(const uint8_t script[],
         }
 
         if (hex_length == 1) {
-            if (script[offset] == 0x81 || (1 <= script[offset] && script[offset] <= 16)) {
-                // non-standard, it should use OP_1NEGATE, or one of OP_1, ..., OP_16
+            if (script[offset] == 0x81 ||
+                (1 <= script[offset] && script[offset] <= 16)) {
+                // non-standard, it should use OP_1NEGATE, or one of OP_1, ...,
+                // OP_16
                 return -1;
             }
         }
@@ -223,10 +234,10 @@ int format_opscript_script(const uint8_t script[],
 
 #ifndef SKIP_FOR_CMOCKA
 
-bool format_script(const uint8_t script[],
-                   size_t script_len,
+bool format_script(const uint8_t script[], size_t script_len,
                    char out[static MAX_OUTPUT_SCRIPT_DESC_SIZE]) {
-    int address_len = get_script_address(script, script_len, out, MAX_OUTPUT_SCRIPT_DESC_SIZE);
+    int address_len = get_script_address(script, script_len, out,
+                                         MAX_OUTPUT_SCRIPT_DESC_SIZE);
     if (address_len < 0) {
         // script does not have an address; check if OP_RETURN
         if (is_opreturn(script, script_len)) {

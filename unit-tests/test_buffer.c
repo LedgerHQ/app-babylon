@@ -1,16 +1,18 @@
-#include <stdarg.h>
-#include <stddef.h>
+// clang-format off
 #include <setjmp.h>
+#include <stdarg.h>
+#include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <string.h>
-#include <stdbool.h>
 
 #include <cmocka.h>
+// clang-format on
 
 #include "common/buffer.h"
 
-static void test_buffer_can_read(void **state) {
-    (void) state;
+static void test_buffer_can_read(void** state) {
+    (void)state;
 
     uint8_t temp[20] = {0};
     buffer_t buf = {.ptr = temp, .size = sizeof(temp), .offset = 0};
@@ -21,8 +23,8 @@ static void test_buffer_can_read(void **state) {
     assert_false(buffer_can_read(&buf, 1));
 }
 
-static void test_buffer_seek(void **state) {
-    (void) state;
+static void test_buffer_seek(void** state) {
+    (void)state;
 
     uint8_t temp[20] = {0};
     buffer_t buf = {.ptr = temp, .size = sizeof(temp), .offset = 0};
@@ -42,8 +44,8 @@ static void test_buffer_seek(void **state) {
     assert_false(buffer_seek_set(&buf, 21));  // can't seek at offset 21
 }
 
-static void test_buffer_get_cur(void **state) {
-    (void) state;
+static void test_buffer_get_cur(void** state) {
+    (void)state;
 
     // clang-format off
     uint8_t temp[6] = {

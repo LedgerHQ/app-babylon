@@ -14,12 +14,12 @@
  *  limitations under the License.
  *****************************************************************************/
 
+#include "base58.h"
+
+#include <stdbool.h>  // bool
 #include <stddef.h>   // size_t
 #include <stdint.h>   // uint*_t
 #include <string.h>   // memmove, memset
-#include <stdbool.h>  // bool
-
-#include "base58.h"
 
 uint8_t const BASE58_TABLE[] = {
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,  //
@@ -36,13 +36,16 @@ uint8_t const BASE58_TABLE[] = {
 };
 
 char const BASE58_ALPHABET[] = {
-    '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F',  //
-    'G', 'H', 'J', 'K', 'L', 'M', 'N', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W',  //
-    'X', 'Y', 'Z', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'm',  //
-    'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z'             //
+    '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D',
+    'E', 'F',  //
+    'G', 'H', 'J', 'K', 'L', 'M', 'N', 'P', 'Q', 'R', 'S', 'T', 'U',
+    'V', 'W',  //
+    'X', 'Y', 'Z', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j',
+    'k', 'm',                                                        //
+    'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z'  //
 };
 
-int base58_decode(const char *in, size_t in_len, uint8_t *out, size_t out_len) {
+int base58_decode(const char* in, size_t in_len, uint8_t* out, size_t out_len) {
     uint8_t tmp[MAX_DEC_INPUT_SIZE] = {0};
     uint8_t buffer[MAX_DEC_INPUT_SIZE] = {0};
 
@@ -64,7 +67,7 @@ int base58_decode(const char *in, size_t in_len, uint8_t *out, size_t out_len) {
             return -1;
         }
 
-        tmp[i] = BASE58_TABLE[(int) in[i]];
+        tmp[i] = BASE58_TABLE[(int)in[i]];
 
         if (tmp[i] == 0xFF) {
             return -1;
@@ -80,9 +83,9 @@ int base58_decode(const char *in, size_t in_len, uint8_t *out, size_t out_len) {
     while (start_at < in_len) {
         uint16_t remainder = 0;
         for (uint8_t div_loop = start_at; div_loop < in_len; div_loop++) {
-            uint16_t digit256 = (uint16_t) (tmp[div_loop] & 0xFF);
+            uint16_t digit256 = (uint16_t)(tmp[div_loop] & 0xFF);
             uint16_t tmp_div = remainder * 58 + digit256;
-            tmp[div_loop] = (uint8_t) (tmp_div / 256);
+            tmp[div_loop] = (uint8_t)(tmp_div / 256);
             remainder = tmp_div % 256;
         }
 
@@ -90,7 +93,7 @@ int base58_decode(const char *in, size_t in_len, uint8_t *out, size_t out_len) {
             ++start_at;
         }
 
-        buffer[--j] = (uint8_t) remainder;
+        buffer[--j] = (uint8_t)remainder;
     }
 
     while ((j < in_len) && (buffer[j] == 0)) {
@@ -99,7 +102,7 @@ int base58_decode(const char *in, size_t in_len, uint8_t *out, size_t out_len) {
 
     int length = in_len - (j - zero_count);
 
-    if ((int) out_len < length) {
+    if ((int)out_len < length) {
         return -1;
     }
 
@@ -108,7 +111,7 @@ int base58_decode(const char *in, size_t in_len, uint8_t *out, size_t out_len) {
     return length;
 }
 
-int base58_encode(const uint8_t *in, size_t in_len, char *out, size_t out_len) {
+int base58_encode(const uint8_t* in, size_t in_len, char* out, size_t out_len) {
     uint8_t buffer[MAX_ENC_INPUT_SIZE * 138 / 100 + 1] = {0};
     size_t i, j;
     size_t stop_at;
@@ -127,7 +130,7 @@ int base58_encode(const uint8_t *in, size_t in_len, char *out, size_t out_len) {
     stop_at = output_size - 1;
     for (size_t start_at = zero_count; start_at < in_len; start_at++) {
         unsigned int carry = in[start_at];
-        for (j = output_size - 1; (int) j >= 0; j--) {
+        for (j = output_size - 1; (int)j >= 0; j--) {
             carry += 256 * buffer[j];
             buffer[j] = carry % 58;
             carry /= 58;

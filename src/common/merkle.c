@@ -14,26 +14,25 @@
  *  See the License for the specific language governing permissions and
  *  limitations under the License.
  *****************************************************************************/
+// clang-format off
 
+#include <stdbool.h>  // bool
 #include <stdint.h>   // uint*_t
 #include <string.h>   // memset, explicit_bzero
-#include <stdbool.h>  // bool
 
-#include "buffer.h"
-#include "../crypto.h"
-
+#include "crypto.h"
 #include "merkle.h"
-
+#include "buffer.h"
 #include "debug-helpers/debug.h"
-
 #include "ledger_assert.h"
+// clang-format on
 
-void merkle_compute_element_hash(const uint8_t *in,
-                                 size_t in_len,
+void merkle_compute_element_hash(const uint8_t* in, size_t in_len,
                                  uint8_t out[static CX_SHA256_SIZE]) {
     // H(0x00 | in)
     uint8_t data = 0x00;
-    cx_iovec_t iovec[2] = {{.iov_base = &data, .iov_len = 1}, {.iov_base = in, .iov_len = in_len}};
+    cx_iovec_t iovec[2] = {{.iov_base = &data, .iov_len = 1},
+                           {.iov_base = in, .iov_len = in_len}};
     cx_sha256_hash_iovec(iovec, 2, out);
 }
 
@@ -59,8 +58,8 @@ int merkle_get_ith_direction(size_t size, size_t index, size_t i) {
     while (size > 1) {
         uint8_t depth = ceil_lg(size);
 
-        // bitmask of the direction from the current node, where 0 = left, 1 = right;
-        // also the number of leaves of the left subtree
+        // bitmask of the direction from the current node, where 0 = left, 1 =
+        // right; also the number of leaves of the left subtree
         uint32_t mask = 1 << (depth - 1);
 
         uint8_t is_right_child = (index & mask) != 0 ? 1 : 0;
