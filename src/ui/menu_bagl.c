@@ -16,31 +16,31 @@
  *****************************************************************************/
 
 #ifdef HAVE_BAGL
+#include "../globals.h"
+#include "menu.h"
 #include "os.h"
 #include "ux.h"
 
-#include "../globals.h"
-#include "menu.h"
-
 // We have a screen with the icon and "Bitcoin is ready" for Bitcoin,
 // "Bitcoin Testnet is ready" for Bitcoin Testnet.
-UX_STEP_NOCB(ux_menu_ready_step_bitcoin, pnn, {&C_babylon_logo, "Babylon", "BTC Staking"});
-UX_STEP_NOCB(ux_menu_ready_step_bitcoin_testnet, pnn, {&C_babylon_logo, "Babylon", "BTC Test"});
+UX_STEP_NOCB(ux_menu_ready_step_bitcoin, pnn,
+             {&C_babylon_logo, "Babylon", "BTC Staking"});
+UX_STEP_NOCB(ux_menu_ready_step_bitcoin_testnet, pnn,
+             {&C_babylon_logo, "Babylon", "BTC Test"});
 
 UX_STEP_NOCB(ux_menu_version_step, bn, {"Version", APPVERSION});
-UX_STEP_CB(ux_menu_about_step, pb, ui_menu_about(), {&C_icon_certificate, "About"});
-UX_STEP_VALID(ux_menu_exit_step, pb, os_sched_exit(-1), {&C_icon_dashboard_x, "Quit"});
+UX_STEP_CB(ux_menu_about_step, pb, ui_menu_about(),
+           {&C_icon_certificate, "About"});
+UX_STEP_VALID(ux_menu_exit_step, pb, os_sched_exit(-1),
+              {&C_icon_dashboard_x, "Quit"});
 
 // FLOW for the main menu (for bitcoin):
 // #1 screen: ready
 // #2 screen: version of the app
 // #3 screen: about submenu
 // #4 screen: quit
-UX_FLOW(ux_menu_main_flow_bitcoin,
-        &ux_menu_ready_step_bitcoin,
-        &ux_menu_version_step,
-        &ux_menu_about_step,
-        &ux_menu_exit_step,
+UX_FLOW(ux_menu_main_flow_bitcoin, &ux_menu_ready_step_bitcoin,
+        &ux_menu_version_step, &ux_menu_about_step, &ux_menu_exit_step,
         FLOW_LOOP);
 
 // FLOW for the main menu (for bitcoin testnet):
@@ -48,11 +48,8 @@ UX_FLOW(ux_menu_main_flow_bitcoin,
 // #2 screen: version of the app
 // #3 screen: about submenu
 // #4 screen: quit
-UX_FLOW(ux_menu_main_flow_bitcoin_testnet,
-        &ux_menu_ready_step_bitcoin_testnet,
-        &ux_menu_version_step,
-        &ux_menu_about_step,
-        &ux_menu_exit_step,
+UX_FLOW(ux_menu_main_flow_bitcoin_testnet, &ux_menu_ready_step_bitcoin_testnet,
+        &ux_menu_version_step, &ux_menu_about_step, &ux_menu_exit_step,
         FLOW_LOOP);
 
 UX_STEP_NOCB(ux_menu_info_step, bn, {"Tomo Wallet Team", "(c) 2025 Ledger"});
@@ -79,7 +76,5 @@ void ui_menu_main_flow_bitcoin_testnet(void) {
     ux_flow_init(0, ux_menu_main_flow_bitcoin_testnet, NULL);
 }
 
-void ui_menu_about(void) {
-    ux_flow_init(0, ux_menu_about_flow, NULL);
-}
+void ui_menu_about(void) { ux_flow_init(0, ux_menu_about_flow, NULL); }
 #endif  // HAVE_BAGL

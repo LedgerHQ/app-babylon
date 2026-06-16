@@ -4,36 +4,34 @@
 #pragma GCC diagnostic ignored "-Wformat-extra-args"         // snprintf
 
 #include <stdbool.h>  // bool
-#include <stdio.h>    // snprintf
-#include <string.h>   // memset
 #include <stdint.h>
+#include <stdio.h>   // snprintf
+#include <string.h>  // memset
 
-#include "os.h"
-#include "ux.h"
-
-#include "./display.h"
-#include "./display_utils.h"
-#include "../constants.h"
-#include "../globals.h"
 #include "../boilerplate/io.h"
 #include "../boilerplate/sw.h"
 #include "../common/bip32.h"
 #include "../common/format.h"
 #include "../common/script.h"
 #include "../constants.h"
+#include "../globals.h"
+#include "./display.h"
+#include "./display_utils.h"
+#include "os.h"
+#include "ux.h"
 
 /*
     STATELESS STEPS
-    As these steps do not access per-step globals (except possibly a callback), they can be used in
-   any flow.
+    As these steps do not access per-step globals (except possibly a callback),
+   they can be used in any flow.
 */
 
 // Step with icon and text for pubkey
-UX_STEP_NOCB(ux_display_confirm_pubkey_step, pn, {&C_icon_eye, "Confirm public key"});
+UX_STEP_NOCB(ux_display_confirm_pubkey_step, pn,
+             {&C_icon_eye, "Confirm public key"});
 
 // Step with icon and text for a suspicious address
-UX_STEP_NOCB(ux_display_unusual_derivation_path_step,
-             pnn,
+UX_STEP_NOCB(ux_display_unusual_derivation_path_step, pnn,
              {
                  &C_icon_warning,
                  "The derivation",
@@ -41,9 +39,7 @@ UX_STEP_NOCB(ux_display_unusual_derivation_path_step,
              });
 
 // Step with icon and text to caution the user to reject if unsure
-UX_STEP_CB(ux_display_reject_if_not_sure_step,
-           pnn,
-           set_ux_flow_response(false),
+UX_STEP_CB(ux_display_reject_if_not_sure_step, pnn, set_ux_flow_response(false),
            {
                &C_icon_crossmark,
                "Reject if you're",
@@ -51,27 +47,21 @@ UX_STEP_CB(ux_display_reject_if_not_sure_step,
            });
 
 // Step with approve button
-UX_STEP_CB(ux_display_approve_step,
-           pb,
-           set_ux_flow_response(true),
+UX_STEP_CB(ux_display_approve_step, pb, set_ux_flow_response(true),
            {
                &C_icon_validate_14,
                "Approve",
            });
 
 // Step with continue button
-UX_STEP_CB(ux_display_continue_step,
-           pb,
-           set_ux_flow_response(true),
+UX_STEP_CB(ux_display_continue_step, pb, set_ux_flow_response(true),
            {
                &C_icon_validate_14,
                "Continue",
            });
 
 // Step with reject button
-UX_STEP_CB(ux_display_reject_step,
-           pb,
-           set_ux_flow_response(false),
+UX_STEP_CB(ux_display_reject_step, pb, set_ux_flow_response(false),
            {
                &C_icon_crossmark,
                "Reject",
@@ -79,72 +69,70 @@ UX_STEP_CB(ux_display_reject_step,
 
 /*
     STATEFUL STEPS
-    These can only be used in the context of specific flows, as they access a common shared space
-   for strings.
+    These can only be used in the context of specific flows, as they access a
+   common shared space for strings.
 */
 
 // PATH/PUBKEY or PATH/ADDRESS
 
 // Step with title/text for BIP32 path
-UX_STEP_NOCB(ux_display_path_step,
-             bnnn_paging,
+UX_STEP_NOCB(ux_display_path_step, bnnn_paging,
              {
                  .title = "Path",
                  .text = g_ui_state.path_and_pubkey.bip32_path_str,
              });
 
 // Step with title/text for pubkey
-UX_STEP_NOCB(ux_display_pubkey_step,
-             bnnn_paging,
+UX_STEP_NOCB(ux_display_pubkey_step, bnnn_paging,
              {
                  .title = "Public key",
                  .text = g_ui_state.path_and_pubkey.pubkey,
              });
 
 // Step with description of a wallet policy
-UX_STEP_NOCB(ux_display_wallet_policy_map_step,
-             bnnn_paging,
+UX_STEP_NOCB(ux_display_wallet_policy_map_step, bnnn_paging,
              {
                  .title = "Wallet policy:",
                  .text = g_ui_state.wallet.descriptor_template,
              });
 
 // Step with index and xpub of a cosigner of a policy_map wallet
-UX_STEP_NOCB(ux_display_wallet_policy_cosigner_pubkey_step,
-             bnnn_paging,
+UX_STEP_NOCB(ux_display_wallet_policy_cosigner_pubkey_step, bnnn_paging,
              {
                  .title = g_ui_state.cosigner_pubkey_and_index.signer_index,
                  .text = g_ui_state.cosigner_pubkey_and_index.pubkey,
              });
 
 // Step with title/text for address, used when showing a wallet receive address
-UX_STEP_NOCB(ux_display_wallet_address_step,
-             bnnn_paging,
+UX_STEP_NOCB(ux_display_wallet_address_step, bnnn_paging,
              {
                  .title = "Address",
                  .text = g_ui_state.wallet.address,
              });
 
 // Step with warning icon and text explaining that there are external inputs
-UX_STEP_NOCB(ux_display_warning_external_inputs_step,
-             pnn,
+UX_STEP_NOCB(ux_display_warning_external_inputs_step, pnn,
              {
                  &C_icon_warning,
                  "There are",
                  "external inputs",
              });
 
-// Step with warning icon for unverified inputs (segwit inputs with no non-witness-utxo)
-UX_STEP_NOCB(ux_unverified_segwit_input_flow_1_step, pb, {&C_icon_warning, "Unverified inputs"});
-UX_STEP_NOCB(ux_unverified_segwit_input_flow_2_step, nn, {"Update", "Ledger Live"});
-UX_STEP_NOCB(ux_unverified_segwit_input_flow_3_step, nn, {"or third party", "wallet software"});
+// Step with warning icon for unverified inputs (segwit inputs with no
+// non-witness-utxo)
+UX_STEP_NOCB(ux_unverified_segwit_input_flow_1_step, pb,
+             {&C_icon_warning, "Unverified inputs"});
+UX_STEP_NOCB(ux_unverified_segwit_input_flow_2_step, nn,
+             {"Update", "Ledger Live"});
+UX_STEP_NOCB(ux_unverified_segwit_input_flow_3_step, nn,
+             {"or third party", "wallet software"});
 
 // Step with warning icon for nondefault sighash
-UX_STEP_NOCB(ux_nondefault_sighash_flow_1_step, pb, {&C_icon_warning, "Non-default sighash"});
+UX_STEP_NOCB(ux_nondefault_sighash_flow_1_step, pb,
+             {&C_icon_warning, "Non-default sighash"});
 
 // Step with eye icon and "Review" and the output index
-UX_STEP_NOCB(ux_review_step,
-             pnn,
+UX_STEP_NOCB(ux_review_step, pnn,
              {
                  &C_icon_eye,
                  "Review",
@@ -152,24 +140,21 @@ UX_STEP_NOCB(ux_review_step,
              });
 
 // Step with "Amount" and an output amount
-UX_STEP_NOCB(ux_validate_amount_step,
-             bnnn_paging,
+UX_STEP_NOCB(ux_validate_amount_step, bnnn_paging,
              {
                  .title = "Amount",
                  .text = g_ui_state.validate_output.amount,
              });
 
 // Step with "Address" and a paginated address
-UX_STEP_NOCB(ux_validate_address_step,
-             bnnn_paging,
+UX_STEP_NOCB(ux_validate_address_step, bnnn_paging,
              {
                  .title = "Address",
                  .text = g_ui_state.validate_output.address_or_description,
              });
 
 // Step with eye icon and a "high fees" warning
-UX_STEP_NOCB(ux_high_fee_step,
-             pnn,
+UX_STEP_NOCB(ux_high_fee_step, pnn,
              {
                  &C_icon_eye,
                  "Fees are above 10%",
@@ -177,112 +162,95 @@ UX_STEP_NOCB(ux_high_fee_step,
              });
 
 // Step with eye icon and a "high fees" warning
-UX_STEP_NOCB(ux_leaf_hash_step,
-             bnnn_paging,
+UX_STEP_NOCB(ux_leaf_hash_step, bnnn_paging,
              {
                  .title = "Leaf hash",
                  .text = g_ui_state.validata_leafhash.hash,
              });
 
-UX_STEP_NOCB(ux_finality_pk_step,
-             bnnn_paging,
+UX_STEP_NOCB(ux_finality_pk_step, bnnn_paging,
              {
                  .title = "Finality provider",
                  .text = g_ui_state.finality_pk.pk,
              });
-UX_STEP_NOCB(ux_cov_pks_step0,
-             bnnn_paging,
+UX_STEP_NOCB(ux_cov_pks_step0, bnnn_paging,
              {
                  .title = "Covenant quorum",
                  .text = g_ui_state.cov_pk.quorum_str,
              });
 
-UX_STEP_NOCB(ux_cov_pks_step1,
-             bnnn_paging,
+UX_STEP_NOCB(ux_cov_pks_step1, bnnn_paging,
              {
                  .title = "Covenant 1",
                  .text = g_ui_state.cov_pk.pk[0],
              });
 
-UX_STEP_NOCB(ux_cov_pks_step2,
-             bnnn_paging,
+UX_STEP_NOCB(ux_cov_pks_step2, bnnn_paging,
              {
                  .title = "Covenant 2",
                  .text = g_ui_state.cov_pk.pk[1],
              });
-UX_STEP_NOCB(ux_cov_pks_step3,
-             bnnn_paging,
+UX_STEP_NOCB(ux_cov_pks_step3, bnnn_paging,
              {
                  .title = "Covenant 3",
                  .text = g_ui_state.cov_pk.pk[2],
              });
-UX_STEP_NOCB(ux_cov_pks_step4,
-             bnnn_paging,
+UX_STEP_NOCB(ux_cov_pks_step4, bnnn_paging,
              {
                  .title = "Covenant 4",
                  .text = g_ui_state.cov_pk.pk[3],
              });
-UX_STEP_NOCB(ux_cov_pks_step5,
-             bnnn_paging,
+UX_STEP_NOCB(ux_cov_pks_step5, bnnn_paging,
              {
                  .title = "Covenant 5",
                  .text = g_ui_state.cov_pk.pk[4],
              });
-UX_STEP_NOCB(ux_cov_pks_step6,
-             bnnn_paging,
+UX_STEP_NOCB(ux_cov_pks_step6, bnnn_paging,
              {
                  .title = "Covenant 6",
                  .text = g_ui_state.cov_pk.pk[5],
              });
-UX_STEP_NOCB(ux_cov_pks_step7,
-             bnnn_paging,
+UX_STEP_NOCB(ux_cov_pks_step7, bnnn_paging,
              {
                  .title = "Covenant 7",
                  .text = g_ui_state.cov_pk.pk[6],
              });
-UX_STEP_NOCB(ux_cov_pks_step8,
-             bnnn_paging,
+UX_STEP_NOCB(ux_cov_pks_step8, bnnn_paging,
              {
                  .title = "Covenant 8",
                  .text = g_ui_state.cov_pk.pk[7],
              });
-UX_STEP_NOCB(ux_cov_pks_step9,
-             bnnn_paging,
+UX_STEP_NOCB(ux_cov_pks_step9, bnnn_paging,
              {
                  .title = "Covenant 9",
                  .text = g_ui_state.cov_pk.pk[8],
              });
 
-UX_STEP_NOCB(ux_bbn_v_step,
-             bnnn_paging,
+UX_STEP_NOCB(ux_bbn_v_step, bnnn_paging,
              {
-                 .title = (const char *) g_ui_state.bbn_v.name,
-                 .text = (const char *) g_ui_state.bbn_v.value,
+                 .title = (const char*)g_ui_state.bbn_v.name,
+                 .text = (const char*)g_ui_state.bbn_v.value,
              });
 
-UX_STEP_NOCB(ux_confirm_selftransfer_step, pnn, {&C_icon_eye, "Confirm", "self-transfer"});
-UX_STEP_NOCB(ux_confirm_transaction_fees_step,
-             bnnn_paging,
+UX_STEP_NOCB(ux_confirm_selftransfer_step, pnn,
+             {&C_icon_eye, "Confirm", "self-transfer"});
+UX_STEP_NOCB(ux_confirm_transaction_fees_step, bnnn_paging,
              {
                  .title = "Fees",
                  .text = g_ui_state.validate_transaction.fee,
              });
-UX_STEP_CB(ux_sign_transaction_step,
-           pbb,
-           set_ux_flow_response(true),
+UX_STEP_CB(ux_sign_transaction_step, pbb, set_ux_flow_response(true),
            {&C_icon_validate_14, "Sign", "action"});
 
 // Step with wallet icon and "Register account"
-UX_STEP_NOCB(ux_display_register_wallet_step,
-             pb,
+UX_STEP_NOCB(ux_display_register_wallet_step, pb,
              {
                  &C_icon_wallet,
                  "Register account",
              });
 
 // Step with wallet icon and "Receive in known wallet"
-UX_STEP_NOCB(ux_display_receive_in_registered_wallet_step,
-             pnn,
+UX_STEP_NOCB(ux_display_receive_in_registered_wallet_step, pnn,
              {
                  &C_icon_wallet,
                  "Receive in",
@@ -290,8 +258,7 @@ UX_STEP_NOCB(ux_display_receive_in_registered_wallet_step,
              });
 
 // Step with wallet icon and "Spend from known wallet"
-UX_STEP_NOCB(ux_display_spend_from_registered_wallet_step,
-             pnn,
+UX_STEP_NOCB(ux_display_spend_from_registered_wallet_step, pnn,
              {
                  &C_icon_wallet,
                  "Babylon",
@@ -299,45 +266,37 @@ UX_STEP_NOCB(ux_display_spend_from_registered_wallet_step,
              });
 
 // Step with "Wallet name:", followed by the wallet name
-UX_STEP_NOCB(ux_display_wallet_name_step,
-             bnnn_paging,
+UX_STEP_NOCB(ux_display_wallet_name_step, bnnn_paging,
              {
                  .title = "Action:",
                  .text = g_ui_state.wallet.wallet_name,
              });
 
 //////////////////////////////////////////////////////////////////////
-UX_STEP_NOCB(ux_sign_message_step,
-             pnn,
+UX_STEP_NOCB(ux_sign_message_step, pnn,
              {
                  &C_icon_certificate,
                  "Sign",
                  "message",
              });
 
-UX_STEP_CB(ux_message_sign_display_path_step,
-           bnnn_paging,
+UX_STEP_CB(ux_message_sign_display_path_step, bnnn_paging,
            set_ux_flow_response(true),
            {
                .title = "Path",
                .text = g_ui_state.path_and_message.bip32_path_str,
            });
 
-UX_STEP_NOCB(ux_message_hash_step,
-             bnnn_paging,
+UX_STEP_NOCB(ux_message_hash_step, bnnn_paging,
              {
                  .title = "Message hash",
                  .text = g_ui_state.path_and_message.message,
              });
 
-UX_STEP_CB(ux_sign_message_accept_new,
-           pbb,
-           set_ux_flow_response(true),
+UX_STEP_CB(ux_sign_message_accept_new, pbb, set_ux_flow_response(true),
            {&C_icon_validate_14, "Sign", "message"});
 
-UX_STEP_CB(ux_message_content_step,
-           custom,
-           set_ux_flow_response(true),
+UX_STEP_CB(ux_message_content_step, custom, set_ux_flow_response(true),
            {
                .title = "Message content",
                .text = g_ui_state.path_and_message.message,
@@ -347,10 +306,8 @@ UX_STEP_CB(ux_message_content_step,
 // #1 screen: certificate icon + "Sign message"
 // #2 screen: display BIP32 Path
 // #3 screen: first page of message content
-UX_FLOW(ux_sign_message_path_and_content_flow,
-        &ux_sign_message_step,
-        &ux_message_sign_display_path_step,
-        &ux_message_content_step,
+UX_FLOW(ux_sign_message_path_and_content_flow, &ux_sign_message_step,
+        &ux_message_sign_display_path_step, &ux_message_content_step,
         &ux_message_content_step);
 
 // FLOW to display a message hash and confirmation to sign a message:
@@ -359,12 +316,9 @@ UX_FLOW(ux_sign_message_path_and_content_flow,
 // #3 screen: display message hash
 // #4 screen: "Sign message" and approve button
 // #5 screen: reject button
-UX_FLOW(ux_sign_message_path_hash_and_confirm_flow,
-        &ux_sign_message_step,
-        &ux_message_sign_display_path_step,
-        &ux_message_hash_step,
-        &ux_sign_message_accept_new,
-        &ux_display_reject_step);
+UX_FLOW(ux_sign_message_path_hash_and_confirm_flow, &ux_sign_message_step,
+        &ux_message_sign_display_path_step, &ux_message_hash_step,
+        &ux_sign_message_accept_new, &ux_display_reject_step);
 
 // FLOW to display the message content:
 // #1 screen: display message content
@@ -373,7 +327,8 @@ UX_FLOW(ux_sign_message_content_flow, &ux_message_content_step, FLOW_LOOP);
 // FLOW to display a confirmation to sign a message:
 // #1 screen: "Sign message" and approve button
 // #2 screen: reject button
-UX_FLOW(ux_sign_message_confirm_flow, &ux_sign_message_accept_new, &ux_display_reject_step);
+UX_FLOW(ux_sign_message_confirm_flow, &ux_sign_message_accept_new,
+        &ux_display_reject_step);
 
 // FLOW to display BIP32 path and pubkey:
 // #1 screen: eye icon + "Confirm Pubkey"
@@ -381,12 +336,9 @@ UX_FLOW(ux_sign_message_confirm_flow, &ux_sign_message_accept_new, &ux_display_r
 // #3 screen: display pubkey
 // #4 screen: approve button
 // #5 screen: reject button
-UX_FLOW(ux_display_pubkey_flow,
-        &ux_display_confirm_pubkey_step,
-        &ux_display_path_step,
-        &ux_display_pubkey_step,
-        &ux_display_approve_step,
-        &ux_display_reject_step);
+UX_FLOW(ux_display_pubkey_flow, &ux_display_confirm_pubkey_step,
+        &ux_display_path_step, &ux_display_pubkey_step,
+        &ux_display_approve_step, &ux_display_reject_step);
 
 // FLOW to display BIP32 path and pubkey, for a non-standard path:
 // #1 screen: warning icon + "The derivation path is unusual"
@@ -398,12 +350,9 @@ UX_FLOW(ux_display_pubkey_flow,
 // #7 screen: reject button
 UX_FLOW(ux_display_pubkey_suspicious_flow,
         &ux_display_unusual_derivation_path_step,
-        &ux_display_confirm_pubkey_step,
-        &ux_display_path_step,
-        &ux_display_reject_if_not_sure_step,
-        &ux_display_pubkey_step,
-        &ux_display_approve_step,
-        &ux_display_reject_step);
+        &ux_display_confirm_pubkey_step, &ux_display_path_step,
+        &ux_display_reject_if_not_sure_step, &ux_display_pubkey_step,
+        &ux_display_approve_step, &ux_display_reject_step);
 
 // FLOW to display the header of a policy map wallet:
 // #1 screen: Wallet icon + "Register account"
@@ -411,12 +360,9 @@ UX_FLOW(ux_display_pubkey_suspicious_flow,
 // #3 screen: display policy map (paginated)
 // #4 screen: approve button
 // #5 screen: reject button
-UX_FLOW(ux_display_register_wallet_flow,
-        &ux_display_register_wallet_step,
-        &ux_display_wallet_name_step,
-        &ux_display_wallet_policy_map_step,
-        &ux_display_approve_step,
-        &ux_display_reject_step);
+UX_FLOW(ux_display_register_wallet_flow, &ux_display_register_wallet_step,
+        &ux_display_wallet_name_step, &ux_display_wallet_policy_map_step,
+        &ux_display_approve_step, &ux_display_reject_step);
 
 // FLOW to display the header of a policy_map wallet:
 // #1 screen: Cosigner index and pubkey (paginated)
@@ -424,8 +370,7 @@ UX_FLOW(ux_display_register_wallet_flow,
 // #3 screen: reject button
 UX_FLOW(ux_display_policy_map_cosigner_pubkey_flow,
         &ux_display_wallet_policy_cosigner_pubkey_step,
-        &ux_display_approve_step,
-        &ux_display_reject_step);
+        &ux_display_approve_step, &ux_display_reject_step);
 
 // FLOW to display the name and an address of a registered wallet:
 // #1 screen: Wallet icon + "Receive in known wallet"
@@ -435,19 +380,15 @@ UX_FLOW(ux_display_policy_map_cosigner_pubkey_flow,
 // #5 screen: reject button
 UX_FLOW(ux_display_receive_in_wallet_flow,
         &ux_display_receive_in_registered_wallet_step,
-        &ux_display_wallet_name_step,
-        &ux_display_wallet_address_step,
-        &ux_display_approve_step,
-        &ux_display_reject_step);
+        &ux_display_wallet_name_step, &ux_display_wallet_address_step,
+        &ux_display_approve_step, &ux_display_reject_step);
 
 // FLOW to display an address of a default wallet policy:
 // #1 screen: wallet address (paginated)
 // #2 screen: approve button
 // #3 screen: reject button
-UX_FLOW(ux_display_default_wallet_address_flow,
-        &ux_display_wallet_address_step,
-        &ux_display_approve_step,
-        &ux_display_reject_step);
+UX_FLOW(ux_display_default_wallet_address_flow, &ux_display_wallet_address_step,
+        &ux_display_approve_step, &ux_display_reject_step);
 
 // FLOW to display a registered wallet and authorize spending:
 // #1 screen: "Spend from known wallet"
@@ -456,8 +397,7 @@ UX_FLOW(ux_display_default_wallet_address_flow,
 // #4 screen: reject button
 UX_FLOW(ux_display_spend_from_wallet_flow,
         &ux_display_spend_from_registered_wallet_step,
-        &ux_display_wallet_name_step,
-        &ux_display_continue_step,
+        &ux_display_wallet_name_step, &ux_display_continue_step,
         &ux_display_reject_step);
 
 // FLOW to warn about external inputs
@@ -466,8 +406,7 @@ UX_FLOW(ux_display_spend_from_wallet_flow,
 // #3 screen: "continue" button
 UX_FLOW(ux_display_warning_external_inputs_flow,
         &ux_display_warning_external_inputs_step,
-        &ux_display_reject_if_not_sure_step,
-        &ux_display_continue_step);
+        &ux_display_reject_if_not_sure_step, &ux_display_continue_step);
 
 // FLOW to warn about segwitv0 inputs with no non-witness-utxo
 // #1 screen: warning icon + "Unverified inputs"
@@ -478,8 +417,7 @@ UX_FLOW(ux_display_warning_external_inputs_flow,
 UX_FLOW(ux_display_unverified_segwit_inputs_flow,
         &ux_unverified_segwit_input_flow_1_step,
         &ux_unverified_segwit_input_flow_2_step,
-        &ux_unverified_segwit_input_flow_3_step,
-        &ux_display_continue_step,
+        &ux_unverified_segwit_input_flow_3_step, &ux_display_continue_step,
         &ux_display_reject_step);
 
 // FLOW to warn about segwitv1 inputs with non-default sighash
@@ -487,10 +425,8 @@ UX_FLOW(ux_display_unverified_segwit_inputs_flow,
 // #2 screen: crossmark icon + "Reject if not sure" (user can reject here)
 // #3 screen: "continue" button
 // #4 screen: "reject" button
-UX_FLOW(ux_display_nondefault_sighash_flow,
-        &ux_nondefault_sighash_flow_1_step,
-        &ux_display_reject_if_not_sure_step,
-        &ux_display_continue_step,
+UX_FLOW(ux_display_nondefault_sighash_flow, &ux_nondefault_sighash_flow_1_step,
+        &ux_display_reject_if_not_sure_step, &ux_display_continue_step,
         &ux_display_reject_step);
 
 // FLOW to validate a single output
@@ -499,64 +435,43 @@ UX_FLOW(ux_display_nondefault_sighash_flow,
 // #3 screen: output address (paginated)
 // #4 screen: "Continue" button
 // #5 screen: reject button
-UX_FLOW(ux_display_output_address_amount_flow,
-        &ux_review_step,
-        &ux_validate_amount_step,
-        &ux_validate_address_step,
-        &ux_display_continue_step,
-        &ux_display_reject_step);
+UX_FLOW(ux_display_output_address_amount_flow, &ux_review_step,
+        &ux_validate_amount_step, &ux_validate_address_step,
+        &ux_display_continue_step, &ux_display_reject_step);
 
 // FLOW to warn about fees above 10% of total
 // #1 screen: eye icon + fees too high message
 // #2 screen: "Continue", with approve button
 // #3 screen: reject button
-UX_FLOW(ux_warn_high_fee_flow,
-        &ux_high_fee_step,
-        &ux_display_continue_step,
+UX_FLOW(ux_warn_high_fee_flow, &ux_high_fee_step, &ux_display_continue_step,
         &ux_display_reject_step);
 
-UX_FLOW(ux_confim_leaf_hash_flow,
-        &ux_leaf_hash_step,
-        &ux_display_continue_step,
+UX_FLOW(ux_confim_leaf_hash_flow, &ux_leaf_hash_step, &ux_display_continue_step,
         &ux_display_reject_step);
 
-UX_FLOW(ux_confim_finality_pk_flow,
-        &ux_finality_pk_step,
-        &ux_display_continue_step,
-        &ux_display_reject_step);
+UX_FLOW(ux_confim_finality_pk_flow, &ux_finality_pk_step,
+        &ux_display_continue_step, &ux_display_reject_step);
 
 // UX_FLOW(ux_confim_cov_pks_flow,
 //     &ux_cov_pks_step,
 //     &ux_display_continue_step,
 //     &ux_display_reject_step);
 
-UX_FLOW(ux_confim_cov_pks_flow,
-        &ux_cov_pks_step0,
-        &ux_cov_pks_step1,
-        &ux_cov_pks_step2,
-        &ux_cov_pks_step3,
-        &ux_cov_pks_step4,
-        &ux_cov_pks_step5,
-        &ux_cov_pks_step6,
-        &ux_cov_pks_step7,
-        &ux_cov_pks_step8,
-        &ux_cov_pks_step9,
-        &ux_display_continue_step,
+UX_FLOW(ux_confim_cov_pks_flow, &ux_cov_pks_step0, &ux_cov_pks_step1,
+        &ux_cov_pks_step2, &ux_cov_pks_step3, &ux_cov_pks_step4,
+        &ux_cov_pks_step5, &ux_cov_pks_step6, &ux_cov_pks_step7,
+        &ux_cov_pks_step8, &ux_cov_pks_step9, &ux_display_continue_step,
         &ux_display_reject_step);
 
-UX_FLOW(ux_confim_bbn_value_flow,
-        &ux_bbn_v_step,
-        &ux_display_continue_step,
+UX_FLOW(ux_confim_bbn_value_flow, &ux_bbn_v_step, &ux_display_continue_step,
         &ux_display_reject_step);
 
 // Show transaction fees and finally accept signing
 // #1 screen: fee amount
 // #2 screen: "Sign transaction", with approve button
 // #3 screen: reject button
-UX_FLOW(ux_accept_transaction_flow,
-        &ux_confirm_transaction_fees_step,
-        &ux_sign_transaction_step,
-        &ux_display_reject_step);
+UX_FLOW(ux_accept_transaction_flow, &ux_confirm_transaction_fees_step,
+        &ux_sign_transaction_step, &ux_display_reject_step);
 
 // Show transaction fees and finally accept signing, in case of self-transfer
 // Since there is no output to show, we add an initial screen to make sure
@@ -565,10 +480,8 @@ UX_FLOW(ux_accept_transaction_flow,
 // #2 screen: fee amount
 // #3 screen: "Sign transaction", with approve button
 // #4 screen: reject button
-UX_FLOW(ux_accept_selftransfer_flow,
-        &ux_confirm_selftransfer_step,
-        &ux_confirm_transaction_fees_step,
-        &ux_sign_transaction_step,
+UX_FLOW(ux_accept_selftransfer_flow, &ux_confirm_selftransfer_step,
+        &ux_confirm_transaction_fees_step, &ux_sign_transaction_step,
         &ux_display_reject_step);
 
 void ui_display_pubkey_flow(void) {
@@ -629,9 +542,7 @@ void ui_display_nondefault_sighash_flow(void) {
 
 void ui_display_output_address_amount_flow(int index) {
     snprintf(g_ui_state.validate_output.index,
-             sizeof(g_ui_state.validate_output.index),
-             "output #%d",
-             index);
+             sizeof(g_ui_state.validate_output.index), "output #%d", index);
     ux_flow_init(0, ux_display_output_address_amount_flow, NULL);
 }
 
@@ -671,7 +582,8 @@ void ui_confirm_bbn_message_flow(void) {
 
 void ui_accept_transaction_flow(bool is_self_transfer) {
     ux_flow_init(0,
-                 is_self_transfer ? ux_accept_selftransfer_flow : ux_accept_transaction_flow,
+                 is_self_transfer ? ux_accept_selftransfer_flow
+                                  : ux_accept_transaction_flow,
                  NULL);
 }
 

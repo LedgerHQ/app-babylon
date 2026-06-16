@@ -4,23 +4,19 @@ on:
   workflow_dispatch:
   push:
     branches:
-    - babylon
-    - unit-test
+      - babylon
+      - unit-test
   pull_request:
 
+permissions:
+  contents: read
+  actions: write
+  code-quality: write
+  pull-requests: write
+
 jobs:
-    job_unit_test:
-        name: Unit test
-        runs-on: ubuntu-latest
-
-        container:
-            image: ghcr.io/ledgerhq/ledger-app-builder/ledger-app-builder:latest
-
-        steps:
-        - name: Clone
-          uses: actions/checkout@v4
-
-        - name: Build and Run unit tests
-          run: |
-            cd unit-tests/
-            cmake -Bbuild -H. && make -C build && make -C build test
+  job_unit_test:
+    uses: LedgerHQ/ledger-app-workflows/.github/workflows/reusable_unit_tests.yml@v1
+    secrets:
+      token: ${{ secrets.GITHUB_TOKEN }}
+      codecov_token: ${{ secrets.CODECOV_TOKEN }}

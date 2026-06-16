@@ -1,19 +1,20 @@
 #ifdef HAVE_NBGL
 
+#include <assert.h>
 #include <stdint.h>
 
-#include "nbgl_use_case.h"
+#include "../handler/lib/policy.h"
 #include "./display.h"
 #include "./menu.h"
 #include "io.h"
-#include "../handler/lib/policy.h"
-
-#include <assert.h>
+#include "nbgl_use_case.h"
 
 #define REVIEW_CONFIRM FIRST_USER_TOKEN + 1
 
-static const char *confirmed_status;  // text displayed in confirmation page (after long press)
-static const char *rejected_status;   // text displayed in rejection page (after reject confirmed)
+static const char*
+    confirmed_status;  // text displayed in confirmation page (after long press)
+static const char* rejected_status;  // text displayed in rejection page (after
+                                     // reject confirmed)
 static bool show_message_start_page;
 
 #define N_UX_PAIRS 13
@@ -27,13 +28,9 @@ static nbgl_content_t contentList[4];
 extern bool G_was_processing_screen_shown;
 
 // ux_flow_response
-static void ux_flow_response_false(void) {
-    set_ux_flow_response(false);
-}
+static void ux_flow_response_false(void) { set_ux_flow_response(false); }
 
-static void ux_flow_response_true(void) {
-    set_ux_flow_response(true);
-}
+static void ux_flow_response_true(void) { set_ux_flow_response(true); }
 
 // Statuses
 static void status_operation_cancel(void) {
@@ -103,8 +100,8 @@ static void start_transaction_callback(bool confirm) {
 }
 
 static void generic_content_callback(int token, uint8_t index, int page) {
-    (void) index;
-    (void) page;
+    (void)index;
+    (void)page;
     switch (token) {
         case REVIEW_CONFIRM:
             status_operation_callback(true);
@@ -116,7 +113,8 @@ static void generic_content_callback(int token, uint8_t index, int page) {
 
 static void finish_transaction_flow(bool choice) {
     if (choice) {
-        nbgl_useCaseReviewStreamingFinish("Sign action?", start_processing_transaction_callback);
+        nbgl_useCaseReviewStreamingFinish(
+            "Sign action?", start_processing_transaction_callback);
     } else {
         status_transaction_cancel();
     }
@@ -148,7 +146,8 @@ void ui_accept_transaction_flow(bool is_self_transfer) {
 #define COMBINE(a, b) a b
 
 // create the string "0 <coind_id> (self-transfer)"
-#define SELF_TRANSFER_DESCRIPTION COMBINE("0 ", COMBINE(COIN_COINID_SHORT, " (self-transfer)"))
+#define SELF_TRANSFER_DESCRIPTION \
+    COMBINE("0 ", COMBINE(COIN_COINID_SHORT, " (self-transfer)"))
 
 void ui_accept_transaction_simplified_flow(void) {
     _Static_assert(N_UX_PAIRS >= 9, "Insufficient pairs for this flow");
@@ -159,33 +158,39 @@ void ui_accept_transaction_simplified_flow(void) {
 
     int n_pairs = 0;
 
-    // Add warning screens for unverified inputs, external inputs or non-default sighash
-    if (g_ui_state.validate_transaction_simplified.warnings.missing_nonwitnessutxo) {
+    // Add warning screens for unverified inputs, external inputs or non-default
+    // sighash
+    if (g_ui_state.validate_transaction_simplified.warnings
+            .missing_nonwitnessutxo) {
+        pairs[n_pairs++] =
+            (nbgl_contentTagValue_t){.centeredInfo = true,
+                                     .item =
+                                         "Unverified inputs\nUpdate Ledger "
+                                         "Live or\nthird party wallet software",
+                                     .value = "",
+                                     .valueIcon = &C_Important_Circle_64px};
+    }
+    if (g_ui_state.validate_transaction_simplified.warnings.external_inputs) {
         pairs[n_pairs++] = (nbgl_contentTagValue_t){
             .centeredInfo = true,
-            .item = "Unverified inputs\nUpdate Ledger Live or\nthird party wallet software",
+            .item = "There are external inputs\nReject if not sure",
             .value = "",
             .valueIcon = &C_Important_Circle_64px};
     }
-    if (g_ui_state.validate_transaction_simplified.warnings.external_inputs) {
-        pairs[n_pairs++] =
-            (nbgl_contentTagValue_t){.centeredInfo = true,
-                                     .item = "There are external inputs\nReject if not sure",
-                                     .value = "",
-                                     .valueIcon = &C_Important_Circle_64px};
-    }
-    if (g_ui_state.validate_transaction_simplified.warnings.non_default_sighash) {
-        pairs[n_pairs++] =
-            (nbgl_contentTagValue_t){.centeredInfo = true,
-                                     .item = "Non-default sighash\nReject if not sure",
-                                     .value = "",
-                                     .valueIcon = &C_Important_Circle_64px};
+    if (g_ui_state.validate_transaction_simplified.warnings
+            .non_default_sighash) {
+        pairs[n_pairs++] = (nbgl_contentTagValue_t){
+            .centeredInfo = true,
+            .item = "Non-default sighash\nReject if not sure",
+            .value = "",
+            .valueIcon = &C_Important_Circle_64px};
     }
 
     if (g_ui_state.validate_transaction_simplified.has_wallet_policy) {
         pairs[n_pairs++] = (nbgl_layoutTagValue_t){
             .item = "From",
-            .value = g_ui_state.validate_transaction_simplified.wallet_policy_name,
+            .value =
+                g_ui_state.validate_transaction_simplified.wallet_policy_name,
         };
     }
 
@@ -197,11 +202,12 @@ void ui_accept_transaction_simplified_flow(void) {
 
         pairs[n_pairs++] = (nbgl_layoutTagValue_t){
             .item = "To",
-            .value = g_ui_state.validate_transaction_simplified.address_or_description,
+            .value = g_ui_state.validate_transaction_simplified
+                         .address_or_description,
         };
     } else {
-        pairs[n_pairs++] =
-            (nbgl_layoutTagValue_t){.item = "Amount", .value = SELF_TRANSFER_DESCRIPTION};
+        pairs[n_pairs++] = (nbgl_layoutTagValue_t){
+            .item = "Amount", .value = SELF_TRANSFER_DESCRIPTION};
     }
 
     pairs[n_pairs++] = (nbgl_layoutTagValue_t){
@@ -210,36 +216,30 @@ void ui_accept_transaction_simplified_flow(void) {
     };
 
     if (g_ui_state.validate_transaction_simplified.warnings.high_fee) {
-        pairs[n_pairs++] = (nbgl_contentTagValue_t){.centeredInfo = true,
-                                                    .item = "Fees are above 10%\n of total amount",
-                                                    .value = "",
-                                                    .valueIcon = &C_Important_Circle_64px};
+        pairs[n_pairs++] = (nbgl_contentTagValue_t){
+            .centeredInfo = true,
+            .item = "Fees are above 10%\n of total amount",
+            .value = "",
+            .valueIcon = &C_Important_Circle_64px};
     }
 
     pairList.nbPairs = n_pairs;
 
-    nbgl_useCaseReview(TYPE_TRANSACTION,
-                       &pairList,
-                       &C_Babylon_64px,
-                       "Review Babylon\nto stake Bitcoin",
-                       NULL,
+    nbgl_useCaseReview(TYPE_TRANSACTION, &pairList, &C_Babylon_64px,
+                       "Review Babylon\nto stake Bitcoin", NULL,
                        "Bitcoin Staking\nto stake Bitcoin?",
                        start_transaction_callback);
 }
 
 void ui_display_transaction_prompt(void) {
-    nbgl_useCaseReviewStreamingStart(TYPE_TRANSACTION,
-                                     &C_Babylon_64px,
-                                     "Connected to\nBabylon Dapp",
-                                     NULL,
+    nbgl_useCaseReviewStreamingStart(TYPE_TRANSACTION, &C_Babylon_64px,
+                                     "Connected to\nBabylon Dapp", NULL,
                                      start_transaction_callback);
 }
 
 void ui_display_output_address_amount_flow(int index) {
     snprintf(g_ui_state.validate_output.index,
-             sizeof(g_ui_state.validate_output.index),
-             "#%d",
-             index);
+             sizeof(g_ui_state.validate_output.index), "#%d", index);
 
     pairs[0].item = "Output";
     pairs[0].value = g_ui_state.validate_output.index;
@@ -259,7 +259,7 @@ void ui_display_output_address_amount_flow(int index) {
 }
 
 void ui_display_output_address_amount_no_index_flow(int index) {
-    (void) index;
+    (void)index;
 
     pairs[0].item = "Amount";
     pairs[0].value = g_ui_state.validate_output.amount;
@@ -291,12 +291,8 @@ void ui_display_pubkey_flow(void) {
     pairList.nbPairs = 2;
     pairList.pairs = pairs;
 
-    nbgl_useCaseReviewLight(TYPE_OPERATION,
-                            &pairList,
-                            &C_Babylon_64px,
-                            "Confirm public key",
-                            NULL,
-                            "Approve public key",
+    nbgl_useCaseReviewLight(TYPE_OPERATION, &pairList, &C_Babylon_64px,
+                            "Confirm public key", NULL, "Approve public key",
                             status_operation_callback);
 }
 
@@ -310,11 +306,8 @@ void ui_display_receive_in_wallet_flow(void) {
     pairList.nbPairs = 1;
     pairList.pairs = pairs;
 
-    nbgl_useCaseAddressReview(g_ui_state.wallet.address,
-                              &pairList,
-                              &C_Babylon_64px,
-                              "Verify Bitcoin\naddress",
-                              NULL,
+    nbgl_useCaseAddressReview(g_ui_state.wallet.address, &pairList,
+                              &C_Babylon_64px, "Verify Bitcoin\naddress", NULL,
                               status_address_callback);
 }
 
@@ -342,25 +335,22 @@ void ui_display_register_wallet_policy_flow(void) {
         .value = g_ui_state.register_wallet_policy.descriptor_template,
     };
 
-    pairs[n_pairs++] = (nbgl_contentTagValue_t){.centeredInfo = true,
-                                                .item = "Review co-signer\npublic keys",
-                                                .value = ""};
+    pairs[n_pairs++] =
+        (nbgl_contentTagValue_t){.centeredInfo = true,
+                                 .item = "Review co-signer\npublic keys",
+                                 .value = ""};
 
     for (size_t i = 0; i < g_ui_state.register_wallet_policy.n_keys; i++) {
-        pairs[n_pairs++] =
-            (nbgl_layoutTagValue_t){.item = g_ui_state.register_wallet_policy.keys_label[i],
-                                    .value = g_ui_state.register_wallet_policy.keys_info[i]};
+        pairs[n_pairs++] = (nbgl_layoutTagValue_t){
+            .item = g_ui_state.register_wallet_policy.keys_label[i],
+            .value = g_ui_state.register_wallet_policy.keys_info[i]};
     }
 
     pairList.nbPairs = n_pairs;
 
-    nbgl_useCaseReviewLight(TYPE_OPERATION,
-                            &pairList,
-                            &C_Babylon_64px,
-                            "Review account\nto register",
-                            NULL,
-                            "Register account?",
-                            status_operation_callback);
+    nbgl_useCaseReviewLight(TYPE_OPERATION, &pairList, &C_Babylon_64px,
+                            "Review account\nto register", NULL,
+                            "Register account?", status_operation_callback);
 }
 
 #endif  // HAVE_NBGL
@@ -392,14 +382,16 @@ void ui_display_pubkey_suspicious_flow(void) {
     contentList[1].type = CENTERED_INFO;
     contentList[1].content.centeredInfo.icon = &C_Important_Circle_64px;
     contentList[1].content.centeredInfo.text1 = "WARNING";
-    contentList[1].content.centeredInfo.text2 = "The derivation path\nis unusual";
+    contentList[1].content.centeredInfo.text2 =
+        "The derivation path\nis unusual";
     contentList[1].content.centeredInfo.text3 = NULL;
     contentList[1].content.centeredInfo.style = LARGE_CASE_BOLD_INFO;
     contentList[1].content.centeredInfo.offsetY = 0;
     contentList[1].contentActionCallback = NULL;
 
     contentList[2].type = TAG_VALUE_LIST;
-    memcpy(&contentList[2].content.tagValueList, &pairList, sizeof(nbgl_layoutTagValueList_t));
+    memcpy(&contentList[2].content.tagValueList, &pairList,
+           sizeof(nbgl_layoutTagValueList_t));
     contentList[2].contentActionCallback = NULL;
 
     contentList[3].type = INFO_BUTTON;
@@ -414,12 +406,14 @@ void ui_display_pubkey_suspicious_flow(void) {
     genericContent.contentsList = contentList;
     genericContent.nbContents = 4;
 
-    nbgl_useCaseGenericReview(&genericContent, "Cancel", status_operation_cancel);
+    nbgl_useCaseGenericReview(&genericContent, "Cancel",
+                              status_operation_cancel);
 }
 
 static void message_finish_callback(bool confirm) {
     if (confirm) {
-        nbgl_useCaseReviewStreamingFinish("Sign message?", start_processing_message_callback);
+        nbgl_useCaseReviewStreamingFinish("Sign message?",
+                                          start_processing_message_callback);
     } else {
         status_message_cancel();
     }
@@ -451,7 +445,8 @@ static void message_display_content(bool confirm) {
         pairList.wrapping = true;
         pairList.nbPairs++;
 
-        nbgl_useCaseReviewStreamingContinue(&pairList, message_display_content_continue);
+        nbgl_useCaseReviewStreamingContinue(&pairList,
+                                            message_display_content_continue);
     } else {
         status_message_cancel();
     }
@@ -477,10 +472,8 @@ static void message_display_path(bool confirm) {
 void ui_sign_message_content_flow(void) {
     if (show_message_start_page == true) {
         show_message_start_page = false;
-        nbgl_useCaseReviewStreamingStart(TYPE_MESSAGE,
-                                         &C_Babylon_64px,
-                                         "Review message",
-                                         NULL,
+        nbgl_useCaseReviewStreamingStart(TYPE_MESSAGE, &C_Babylon_64px,
+                                         "Review message", NULL,
                                          message_display_content);
     } else {
         message_display_content(true);
@@ -488,20 +481,17 @@ void ui_sign_message_content_flow(void) {
 }
 
 void ui_sign_message_path_hash_and_confirm_flow(void) {
-    nbgl_useCaseReviewStreamingStart(TYPE_MESSAGE,
-                                     &C_Babylon_64px,
-                                     "Review message",
-                                     NULL,
+    nbgl_useCaseReviewStreamingStart(TYPE_MESSAGE, &C_Babylon_64px,
+                                     "Review message", NULL,
                                      message_display_path);
 }
 
 void ui_sign_message_confirm_flow(void) {
-    nbgl_useCaseReviewStreamingFinish("Sign message?", start_processing_message_callback);
+    nbgl_useCaseReviewStreamingFinish("Sign message?",
+                                      start_processing_message_callback);
 }
 
-void ui_set_display_prompt(void) {
-    show_message_start_page = true;
-}
+void ui_set_display_prompt(void) { show_message_start_page = true; }
 
 void ui_display_spend_from_wallet_flow(void) {
     confirmed_status = "Action\nconfirmed";
@@ -519,58 +509,37 @@ void ui_display_spend_from_wallet_flow(void) {
     int action = get_action_type(g_ui_state.wallet.wallet_name);
     switch (action) {
         case BBN_POLICY_SLASHING:
-            nbgl_useCaseReviewLight(TYPE_OPERATION,
-                                    &pairList,
-                                    &C_Babylon_64px,
-                                    "Babylon action",
-                                    NULL,
+            nbgl_useCaseReviewLight(TYPE_OPERATION, &pairList, &C_Babylon_64px,
+                                    "Babylon action", NULL,
                                     "Confirm consent to slashing action",
                                     status_operation_callback);
             break;
         case BBN_POLICY_SLASHING_UNBONDING:
-            nbgl_useCaseReviewLight(TYPE_OPERATION,
-                                    &pairList,
-                                    &C_Babylon_64px,
-                                    "Babylon action",
-                                    NULL,
+            nbgl_useCaseReviewLight(TYPE_OPERATION, &pairList, &C_Babylon_64px,
+                                    "Babylon action", NULL,
                                     "Confirm consent to unbonding slashing",
                                     status_operation_callback);
             break;
         case BBN_POLICY_STAKE_TRANSFER:
-            nbgl_useCaseReviewLight(TYPE_OPERATION,
-                                    &pairList,
-                                    &C_Babylon_64px,
-                                    "Babylon action",
-                                    NULL,
+            nbgl_useCaseReviewLight(TYPE_OPERATION, &pairList, &C_Babylon_64px,
+                                    "Babylon action", NULL,
                                     "Confirm staking transaction action",
                                     status_operation_callback);
             break;
         case BBN_POLICY_UNBOND:
-            nbgl_useCaseReviewLight(TYPE_OPERATION,
-                                    &pairList,
-                                    &C_Babylon_64px,
-                                    "Babylon action",
-                                    NULL,
-                                    "Confirm unbouding action",
-                                    status_operation_callback);
+            nbgl_useCaseReviewLight(
+                TYPE_OPERATION, &pairList, &C_Babylon_64px, "Babylon action",
+                NULL, "Confirm unbouding action", status_operation_callback);
             break;
         case BBN_POLICY_WITHDRAW:
-            nbgl_useCaseReviewLight(TYPE_OPERATION,
-                                    &pairList,
-                                    &C_Babylon_64px,
-                                    "Babylon action",
-                                    NULL,
-                                    "Confirm withdraw action",
-                                    status_operation_callback);
+            nbgl_useCaseReviewLight(
+                TYPE_OPERATION, &pairList, &C_Babylon_64px, "Babylon action",
+                NULL, "Confirm withdraw action", status_operation_callback);
             break;
         case BBN_POLICY_BIP322:
-            nbgl_useCaseReviewLight(TYPE_OPERATION,
-                                    &pairList,
-                                    &C_Babylon_64px,
-                                    "Babylon action",
-                                    NULL,
-                                    "Confirm sign message action",
-                                    status_operation_callback);
+            nbgl_useCaseReviewLight(
+                TYPE_OPERATION, &pairList, &C_Babylon_64px, "Babylon action",
+                NULL, "Confirm sign message action", status_operation_callback);
             break;
         default:
             break;
@@ -579,22 +548,16 @@ void ui_display_spend_from_wallet_flow(void) {
 
 // Address flow
 void ui_display_default_wallet_address_flow(void) {
-    nbgl_useCaseAddressReview(g_ui_state.wallet.address,
-                              NULL,
-                              &C_Babylon_64px,
-                              "Verify Bitcoin\naddress",
-                              NULL,
+    nbgl_useCaseAddressReview(g_ui_state.wallet.address, NULL, &C_Babylon_64px,
+                              "Verify Bitcoin\naddress", NULL,
                               status_address_callback);
 }
 
 // Warning Flows
 void ui_warn_high_fee_flow(void) {
-    nbgl_useCaseChoice(&C_Important_Circle_64px,
-                       "Warning",
-                       "Fees are above 10%\n of total amount",
-                       "Continue",
-                       "Reject",
-                       start_transaction_callback);
+    nbgl_useCaseChoice(&C_Important_Circle_64px, "Warning",
+                       "Fees are above 10%\n of total amount", "Continue",
+                       "Reject", start_transaction_callback);
 }
 
 // Warning Flows
@@ -611,11 +574,8 @@ void ui_confim_leaf_hash_flow(void) {
     pairList.nbPairs = 1;
     pairList.pairs = pairs;
 
-    nbgl_useCaseReviewLight(TYPE_OPERATION,
-                            &pairList,
-                            &C_Babylon_64px,
-                            "Leaf hash",
-                            NULL,
+    nbgl_useCaseReviewLight(TYPE_OPERATION, &pairList, &C_Babylon_64px,
+                            "Leaf hash", NULL,
                             "Confirm it matches \ndisplayed on the Dapp",
                             status_operation_callback);
 }
@@ -633,11 +593,8 @@ void ui_confirm_finality_pk_flow(void) {
     pairList.nbPairs = 1;
     pairList.pairs = pairs;
 
-    nbgl_useCaseReviewLight(TYPE_OPERATION,
-                            &pairList,
-                            &C_Babylon_64px,
-                            "Finality provider\npublic key",
-                            NULL,
+    nbgl_useCaseReviewLight(TYPE_OPERATION, &pairList, &C_Babylon_64px,
+                            "Finality provider\npublic key", NULL,
                             "Confirm finality provider public key",
                             status_operation_callback);
 }
@@ -650,9 +607,7 @@ void ui_confirm_cov_pks_flow(int count) {
     // Setup data to display
     for (int i = 1; i <= count; i++) {
         snprintf(g_ui_state.cov_pk.name[i - 1],
-                 sizeof(g_ui_state.cov_pk.name[i - 1]),
-                 "Covenant %d",
-                 i);
+                 sizeof(g_ui_state.cov_pk.name[i - 1]), "Covenant %d", i);
         pairs[i].item = g_ui_state.cov_pk.name[i - 1];
         pairs[i].value = g_ui_state.cov_pk.pk[i - 1];
     }
@@ -662,13 +617,9 @@ void ui_confirm_cov_pks_flow(int count) {
     pairList.nbPairs = count + 1;
     pairList.pairs = pairs;
 
-    nbgl_useCaseReviewLight(TYPE_OPERATION,
-                            &pairList,
-                            &C_Babylon_64px,
-                            "Covenant public keys",
-                            NULL,
-                            "Confirm covenant\npublic keys",
-                            status_operation_callback);
+    nbgl_useCaseReviewLight(
+        TYPE_OPERATION, &pairList, &C_Babylon_64px, "Covenant public keys",
+        NULL, "Confirm covenant\npublic keys", status_operation_callback);
 }
 
 void ui_confirm_bbn_timelock_flow(void) {
@@ -676,21 +627,17 @@ void ui_confirm_bbn_timelock_flow(void) {
     rejected_status = "Action rejected";
 
     // Setup data to display
-    pairs[0].item = (const char *) g_ui_state.bbn_v.name;
-    pairs[0].value = (const char *) g_ui_state.bbn_v.value;
+    pairs[0].item = (const char*)g_ui_state.bbn_v.name;
+    pairs[0].value = (const char*)g_ui_state.bbn_v.value;
 
     // Setup list
     pairList.nbMaxLinesForValue = 0;
     pairList.nbPairs = 1;
     pairList.pairs = pairs;
 
-    nbgl_useCaseReviewLight(TYPE_OPERATION,
-                            &pairList,
-                            &C_Babylon_64px,
-                            "BTC blocks timelock",
-                            NULL,
-                            "Confirm BTC blocks timelock",
-                            status_operation_callback);
+    nbgl_useCaseReviewLight(
+        TYPE_OPERATION, &pairList, &C_Babylon_64px, "BTC blocks timelock", NULL,
+        "Confirm BTC blocks timelock", status_operation_callback);
 }
 
 void ui_confirm_bbn_unbonding_timelock_flow(void) {
@@ -698,19 +645,16 @@ void ui_confirm_bbn_unbonding_timelock_flow(void) {
     rejected_status = "Action rejected";
 
     // Setup data to display
-    pairs[0].item = (const char *) g_ui_state.bbn_v.name;
-    pairs[0].value = (const char *) g_ui_state.bbn_v.value;
+    pairs[0].item = (const char*)g_ui_state.bbn_v.name;
+    pairs[0].value = (const char*)g_ui_state.bbn_v.value;
 
     // Setup list
     pairList.nbMaxLinesForValue = 0;
     pairList.nbPairs = 1;
     pairList.pairs = pairs;
 
-    nbgl_useCaseReviewLight(TYPE_OPERATION,
-                            &pairList,
-                            &C_Babylon_64px,
-                            "BTC blocks unbonding timelock",
-                            NULL,
+    nbgl_useCaseReviewLight(TYPE_OPERATION, &pairList, &C_Babylon_64px,
+                            "BTC blocks unbonding timelock", NULL,
                             "Confirm BTC blocks unbonding timelock",
                             status_operation_callback);
 }
@@ -720,47 +664,35 @@ void ui_confirm_bbn_message_flow(void) {
     rejected_status = "Action rejected";
 
     // Setup data to display
-    pairs[0].item = (const char *) g_ui_state.bbn_v.name;
-    pairs[0].value = (const char *) g_ui_state.bbn_v.value;
+    pairs[0].item = (const char*)g_ui_state.bbn_v.name;
+    pairs[0].value = (const char*)g_ui_state.bbn_v.value;
 
     // Setup list
     pairList.nbMaxLinesForValue = 0;
     pairList.nbPairs = 1;
     pairList.pairs = pairs;
 
-    nbgl_useCaseReviewLight(TYPE_OPERATION,
-                            &pairList,
-                            &C_Babylon_64px,
-                            "Sign message action",
-                            NULL,
-                            "Confirm sign message action",
-                            status_operation_callback);
+    nbgl_useCaseReviewLight(
+        TYPE_OPERATION, &pairList, &C_Babylon_64px, "Sign message action", NULL,
+        "Confirm sign message action", status_operation_callback);
 }
 
 void ui_display_warning_external_inputs_flow(void) {
-    nbgl_useCaseChoice(&C_Important_Circle_64px,
-                       "Warning",
-                       "There are external inputs",
-                       "Continue",
-                       "Reject if not sure",
-                       start_transaction_callback);
+    nbgl_useCaseChoice(&C_Important_Circle_64px, "Warning",
+                       "There are external inputs", "Continue",
+                       "Reject if not sure", start_transaction_callback);
 }
 
 void ui_display_unverified_segwit_inputs_flows(void) {
-    nbgl_useCaseChoice(&C_Important_Circle_64px,
-                       "Warning",
-                       "Unverified inputs\nUpdate Ledger Live or\nthird party wallet software",
-                       "Continue",
-                       "Reject if not sure",
-                       start_transaction_callback);
+    nbgl_useCaseChoice(
+        &C_Important_Circle_64px, "Warning",
+        "Unverified inputs\nUpdate Ledger Live or\nthird party wallet software",
+        "Continue", "Reject if not sure", start_transaction_callback);
 }
 
 void ui_display_nondefault_sighash_flow(void) {
-    nbgl_useCaseChoice(&C_Important_Circle_64px,
-                       "Warning",
-                       "Non-default sighash",
-                       "Continue",
-                       "Reject if not sure",
+    nbgl_useCaseChoice(&C_Important_Circle_64px, "Warning",
+                       "Non-default sighash", "Continue", "Reject if not sure",
                        start_transaction_callback);
 }
 
@@ -781,7 +713,8 @@ void ui_display_post_processing_confirm_transaction(bool success) {
         nbgl_useCaseReviewStatus(STATUS_TYPE_TRANSACTION_SIGNED, ui_menu_main);
     } else {
         ux_flow_response_false();
-        nbgl_useCaseReviewStatus(STATUS_TYPE_TRANSACTION_REJECTED, ui_menu_main);
+        nbgl_useCaseReviewStatus(STATUS_TYPE_TRANSACTION_REJECTED,
+                                 ui_menu_main);
     }
 }
 #endif  // HAVE_NBGL

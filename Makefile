@@ -153,9 +153,6 @@ DEFINES   += HAVE_BOLOS_APP_STACK_CANARY
 
 DEFINES   += IO_SEPROXYHAL_BUFFER_SIZE_B=300
 
-# debugging helper functions and macros
-CFLAGS    += -include debug-helpers/debug.h
-
 # DEFINES   += HAVE_PRINT_STACK_POINTER
 
 ifeq ($(DEBUG),10)

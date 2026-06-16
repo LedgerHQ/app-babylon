@@ -15,11 +15,11 @@
  *  limitations under the License.
  *****************************************************************************/
 
-#include "os.h"
-#include "ux.h"
+#include "menu.h"
 
 #include "../globals.h"
-#include "menu.h"
+#include "os.h"
+#include "ux.h"
 
 #define BIP32_PUBKEY_VERSION_MAINNET 0x0488B21E
 #define BIP32_PUBKEY_VERSION_TESTNET 0x043587CF
@@ -27,7 +27,8 @@
 void ui_menu_main() {
     if (BIP32_PUBKEY_VERSION == BIP32_PUBKEY_VERSION_MAINNET) {  // mainnet
         ui_menu_main_flow_bitcoin();
-    } else if (BIP32_PUBKEY_VERSION == BIP32_PUBKEY_VERSION_TESTNET) {  // testnet
+    } else if (BIP32_PUBKEY_VERSION ==
+               BIP32_PUBKEY_VERSION_TESTNET) {  // testnet
         ui_menu_main_flow_bitcoin_testnet();
     }
 }

@@ -17,20 +17,21 @@
 
 #include <stdint.h>
 
-#include "boilerplate/io.h"
-#include "boilerplate/dispatcher.h"
-#include "boilerplate/sw.h"
+#include "../commands.h"
 #include "../common/base58.h"
 #include "../common/bip32.h"
-#include "../commands.h"
 #include "../constants.h"
 #include "../crypto.h"
 #include "../ui/display.h"
 #include "../ui/menu.h"
+#include "boilerplate/dispatcher.h"
+#include "boilerplate/io.h"
+#include "boilerplate/sw.h"
 
 #define H 0x80000000ul
 
-static bool is_path_safe_for_pubkey_export(const uint32_t bip32_path[], size_t bip32_path_len) {
+static bool is_path_safe_for_pubkey_export(const uint32_t bip32_path[],
+                                           size_t bip32_path_len) {
     // Exception for Electrum: it historically used "m/4541509h/1112098098h"
     // to derive encryption keys, so we whitelist it.
     if (bip32_path_len == 2 && bip32_path[0] == (4541509 ^ H) &&
@@ -53,8 +54,8 @@ static bool is_path_safe_for_pubkey_export(const uint32_t bip32_path[], size_t b
             hardened_der_len = 3;
             break;
         case 45:
-            // BIP-45 prescribes simply length 1, but we instead support existing deployed
-            // use cases with path "m/45'/coin_type'/account'
+            // BIP-45 prescribes simply length 1, but we instead support
+            // existing deployed use cases with path "m/45'/coin_type'/account'
             hardened_der_len = 3;
             break;
         case 48:
@@ -94,7 +95,8 @@ static bool is_path_safe_for_pubkey_export(const uint32_t bip32_path[], size_t b
         return false;
     }
 
-    // For BIP48, there is also the script type, with only standardized values 1' and 2'
+    // For BIP48, there is also the script type, with only standardized values
+    // 1' and 2'
     if (purpose == 48) {
         uint32_t script_type = bip32_path[3] & 0x7FFFFFFF;
         if (script_type != 1 && script_type != 2) {
@@ -105,8 +107,9 @@ static bool is_path_safe_for_pubkey_export(const uint32_t bip32_path[], size_t b
     return true;
 }
 
-void handler_get_extended_pubkey(dispatcher_context_t *dc, uint8_t protocol_version) {
-    (void) protocol_version;
+void handler_get_extended_pubkey(dispatcher_context_t* dc,
+                                 uint8_t protocol_version) {
+    (void)protocol_version;
 
     LOG_PROCESSOR(__FILE__, __LINE__, __func__);
 
@@ -137,24 +140,22 @@ void handler_get_extended_pubkey(dispatcher_context_t *dc, uint8_t protocol_vers
     }
 
     serialized_extended_pubkey_check_t pubkey_check;
-    if (0 > get_extended_pubkey_at_path(bip32_path,
-                                        bip32_path_len,
-                                        BIP32_PUBKEY_VERSION,
-                                        &pubkey_check.serialized_extended_pubkey)) {
+    if (0 > get_extended_pubkey_at_path(
+                bip32_path, bip32_path_len, BIP32_PUBKEY_VERSION,
+                &pubkey_check.serialized_extended_pubkey)) {
         PRINTF("Failed getting bip32 pubkey\n");
         SEND_SW(dc, SW_BAD_STATE);
         return;
     }
 
-    crypto_get_checksum((uint8_t *) &pubkey_check.serialized_extended_pubkey,
+    crypto_get_checksum((uint8_t*)&pubkey_check.serialized_extended_pubkey,
                         sizeof(pubkey_check.serialized_extended_pubkey),
                         pubkey_check.checksum);
 
     char pubkey_str[MAX_SERIALIZED_PUBKEY_LENGTH + 1];
-    int pubkey_str_len = base58_encode((uint8_t *) &pubkey_check,
-                                       sizeof(pubkey_check),
-                                       pubkey_str,
-                                       sizeof(pubkey_str));
+    int pubkey_str_len =
+        base58_encode((uint8_t*)&pubkey_check, sizeof(pubkey_check), pubkey_str,
+                      sizeof(pubkey_str));
     if (pubkey_str_len != 111 && pubkey_str_len != 112) {
         PRINTF("Failed encoding base58 pubkey\n");
         SEND_SW(dc, SW_BAD_STATE);
@@ -164,7 +165,8 @@ void handler_get_extended_pubkey(dispatcher_context_t *dc, uint8_t protocol_vers
 
     char path_str[MAX_SERIALIZED_BIP32_PATH_LENGTH + 1] = "(Master key)";
     if (bip32_path_len > 0) {
-        bip32_path_format(bip32_path, bip32_path_len, path_str, sizeof(path_str));
+        bip32_path_format(bip32_path, bip32_path_len, path_str,
+                          sizeof(path_str));
     }
 
     if (display && !ui_display_pubkey(dc, path_str, !is_safe, pubkey_str)) {

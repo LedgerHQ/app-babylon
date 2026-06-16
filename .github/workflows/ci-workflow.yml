@@ -31,7 +31,7 @@ jobs:
 
     steps:
       - name: Clone
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Build
         run: |
@@ -39,13 +39,13 @@ jobs:
           make clean
           make DEBUG=0 COIN=BBNST_test BOLOS_SDK=${{ matrix.SDK }} && mv bin/ bitcoin-testnet-bin/
       - name: Upload Bitcoin app binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: bitcoin-app-${{ matrix.model }}
           path: bitcoin-bin
 
       - name: Upload Bitcoin Testnet app binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: bitcoin-testnet-app-${{ matrix.model }}
           path: bitcoin-testnet-bin
@@ -60,14 +60,14 @@ jobs:
 
     steps:
       - name: Clone
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Build
         run: |
           make DEBUG=0 COIN=BBNST_test BOLOS_SDK="$NANOSP_SDK" AUTOAPPROVE_FOR_PERF_TESTS=1
 
       - name: Upload Bitcoin Testnet app binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: bitcoin-testnet-perftest-app-nanosp
           path: bin
