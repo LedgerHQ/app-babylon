@@ -47,7 +47,7 @@ PATH_APP_LOAD_PARAMS = ""
 # Application version
 APPVERSION_M = 1
 APPVERSION_N = 0
-APPVERSION_P = 0
+APPVERSION_P = 1
 #APPVERSION_SUFFIX = ap # if not empty, appended at the end. Do not add a dash.
 
 ifeq ($(APPVERSION_SUFFIX),)
@@ -154,7 +154,7 @@ DEFINES   += HAVE_BOLOS_APP_STACK_CANARY
 DEFINES   += IO_SEPROXYHAL_BUFFER_SIZE_B=300
 
 # debugging helper functions and macros
-CFLAGS    += -include debug-helpers/debug.h
+CFLAGS    += -include src/debug-helpers/debug.h
 
 # DEFINES   += HAVE_PRINT_STACK_POINTER
 
